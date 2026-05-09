@@ -1,0 +1,587 @@
+[[entries]]
+rust = "show_progress"
+rust_path = "src/simulate/synth_pool.rs"
+other = "show_progress"
+other_path = "vireo/simulate/synth_pool.py"
+other_class = ""
+
+[[entries]]
+rust = "sample_barcodes"
+rust_path = "src/simulate/synth_pool.rs"
+other = "sample_barcodes"
+other_path = "vireo/simulate/synth_pool.py"
+other_class = ""
+
+[[entries]]
+rust = "pool_barcodes"
+rust_path = "src/simulate/synth_pool.rs"
+other = "pool_barcodes"
+other_path = "vireo/simulate/synth_pool.py"
+other_class = ""
+
+[[entries]]
+rust = "fetch_reads"
+rust_path = "src/simulate/synth_pool.rs"
+other = "fetch_reads"
+other_path = "vireo/simulate/synth_pool.py"
+other_class = ""
+
+[[entries]]
+rust = "merge_bams"
+rust_path = "src/simulate/synth_pool.rs"
+other = "merge_bams"
+other_path = "vireo/simulate/synth_pool.py"
+other_class = ""
+
+[[entries]]
+rust = "main"
+rust_path = "src/simulate/synth_pool.rs"
+other = "main"
+other_path = "vireo/simulate/synth_pool.py"
+other_class = ""
+
+[[entries]]
+rust = "main"
+rust_path = "src/vireo_snp/gtbarcode.rs"
+other = "main"
+other_path = "vireo/vireoSNP/GTbarcode.py"
+other_class = ""
+
+[[entries]]
+rust = "show_progress"
+rust_path = "src/vireo_snp/vireo.rs"
+other = "show_progress"
+other_path = "vireo/vireoSNP/vireo.py"
+other_class = ""
+
+[[entries]]
+rust = "main"
+rust_path = "src/vireo_snp/vireo.rs"
+other = "main"
+other_path = "vireo/vireoSNP/vireo.py"
+other_class = ""
+
+[[entries]]
+rust = "heat_matrix"
+rust_path = "src/vireo_snp/plot/base_plot.rs"
+other = "heat_matrix"
+other_path = "vireo/vireoSNP/plot/base_plot.py"
+other_class = ""
+
+[[entries]]
+rust = "plot_GT"
+rust_path = "src/vireo_snp/plot/base_plot.rs"
+other = "plot_GT"
+other_path = "vireo/vireoSNP/plot/base_plot.py"
+other_class = ""
+
+[[entries]]
+rust = "minicode_plot"
+rust_path = "src/vireo_snp/plot/base_plot.rs"
+other = "minicode_plot"
+other_path = "vireo/vireoSNP/plot/base_plot.py"
+other_class = ""
+
+[[entries]]
+rust = "anno_heat"
+rust_path = "src/vireo_snp/plot/base_plot.rs"
+other = "anno_heat"
+other_path = "vireo/vireoSNP/plot/base_plot.py"
+other_class = ""
+
+[[entries]]
+rust = "get_confusion"
+rust_path = "src/vireo_snp/utils/base_utils.rs"
+other = "get_confusion"
+other_path = "vireo/vireoSNP/utils/base_utils.py"
+other_class = ""
+
+[[entries]]
+rust = "__init__"
+rust_path = "src/vireo_snp/utils/bmm_model.rs"
+rust_class = "BinomMixtureVB"
+other = "__init__"
+other_path = "vireo/vireoSNP/utils/bmm_model.py"
+other_class = "BinomMixtureVB"
+
+[[entries]]
+rust = "set_initial"
+rust_path = "src/vireo_snp/utils/bmm_model.rs"
+rust_class = "BinomMixtureVB"
+other = "set_initial"
+other_path = "vireo/vireoSNP/utils/bmm_model.py"
+other_class = "BinomMixtureVB"
+
+[[entries]]
+rust = "set_prior"
+rust_path = "src/vireo_snp/utils/bmm_model.rs"
+rust_class = "BinomMixtureVB"
+other = "set_prior"
+other_path = "vireo/vireoSNP/utils/bmm_model.py"
+other_class = "BinomMixtureVB"
+
+[[entries]]
+rust = "theta_s1"
+rust_path = "src/vireo_snp/utils/bmm_model.rs"
+rust_class = "BinomMixtureVB"
+other = "theta_s1"
+other_path = "vireo/vireoSNP/utils/bmm_model.py"
+other_class = "BinomMixtureVB"
+
+[[entries]]
+rust = "theta_s2"
+rust_path = "src/vireo_snp/utils/bmm_model.rs"
+rust_class = "BinomMixtureVB"
+other = "theta_s2"
+other_path = "vireo/vireoSNP/utils/bmm_model.py"
+other_class = "BinomMixtureVB"
+
+[[entries]]
+rust = "get_E_logLik"
+rust_path = "src/vireo_snp/utils/bmm_model.rs"
+rust_class = "BinomMixtureVB"
+other = "get_E_logLik"
+other_path = "vireo/vireoSNP/utils/bmm_model.py"
+other_class = "BinomMixtureVB"
+
+[[entries]]
+rust = "update_theta_size"
+rust_path = "src/vireo_snp/utils/bmm_model.rs"
+rust_class = "BinomMixtureVB"
+other = "update_theta_size"
+other_path = "vireo/vireoSNP/utils/bmm_model.py"
+other_class = "BinomMixtureVB"
+
+[[entries]]
+rust = "update_ID_prob"
+rust_path = "src/vireo_snp/utils/bmm_model.rs"
+rust_class = "BinomMixtureVB"
+other = "update_ID_prob"
+other_path = "vireo/vireoSNP/utils/bmm_model.py"
+other_class = "BinomMixtureVB"
+
+[[entries]]
+rust = "get_ELBO"
+rust_path = "src/vireo_snp/utils/bmm_model.rs"
+rust_class = "BinomMixtureVB"
+other = "get_ELBO"
+other_path = "vireo/vireoSNP/utils/bmm_model.py"
+other_class = "BinomMixtureVB"
+
+[[entries]]
+rust = "_fit_BV"
+rust_path = "src/vireo_snp/utils/bmm_model.rs"
+rust_class = "BinomMixtureVB"
+other = "_fit_BV"
+other_path = "vireo/vireoSNP/utils/bmm_model.py"
+other_class = "BinomMixtureVB"
+
+[[entries]]
+rust = "fit"
+rust_path = "src/vireo_snp/utils/bmm_model.rs"
+rust_class = "BinomMixtureVB"
+other = "fit"
+other_path = "vireo/vireoSNP/utils/bmm_model.py"
+other_class = "BinomMixtureVB"
+
+[[entries]]
+rust = "match_donor_VCF"
+rust_path = "src/vireo_snp/utils/io_utils.rs"
+other = "match_donor_VCF"
+other_path = "vireo/vireoSNP/utils/io_utils.py"
+other_class = ""
+
+[[entries]]
+rust = "read_cellSNP"
+rust_path = "src/vireo_snp/utils/io_utils.rs"
+other = "read_cellSNP"
+other_path = "vireo/vireoSNP/utils/io_utils.py"
+other_class = ""
+
+[[entries]]
+rust = "read_vartrix"
+rust_path = "src/vireo_snp/utils/io_utils.rs"
+other = "read_vartrix"
+other_path = "vireo/vireoSNP/utils/io_utils.py"
+other_class = ""
+
+[[entries]]
+rust = "write_donor_id"
+rust_path = "src/vireo_snp/utils/io_utils.rs"
+other = "write_donor_id"
+other_path = "vireo/vireoSNP/utils/io_utils.py"
+other_class = ""
+
+[[entries]]
+rust = "make_whitelists"
+rust_path = "src/vireo_snp/utils/io_utils.rs"
+other = "make_whitelists"
+other_path = "vireo/vireoSNP/utils/io_utils.py"
+other_class = ""
+
+[[entries]]
+rust = "barcode_entropy"
+rust_path = "src/vireo_snp/utils/variant_select.rs"
+other = "barcode_entropy"
+other_path = "vireo/vireoSNP/utils/variant_select.py"
+other_class = ""
+
+[[entries]]
+rust = "variant_select"
+rust_path = "src/vireo_snp/utils/variant_select.rs"
+other = "variant_select"
+other_path = "vireo/vireoSNP/utils/variant_select.py"
+other_class = ""
+
+[[entries]]
+rust = "variant_ELBO_gain"
+rust_path = "src/vireo_snp/utils/variant_select.rs"
+other = "variant_ELBO_gain"
+other_path = "vireo/vireoSNP/utils/variant_select.py"
+other_class = ""
+
+[[entries]]
+rust = "parse_sample_info"
+rust_path = "src/vireo_snp/utils/vcf_utils.rs"
+other = "parse_sample_info"
+other_path = "vireo/vireoSNP/utils/vcf_utils.py"
+other_class = ""
+
+[[entries]]
+rust = "load_VCF"
+rust_path = "src/vireo_snp/utils/vcf_utils.rs"
+other = "load_VCF"
+other_path = "vireo/vireoSNP/utils/vcf_utils.py"
+other_class = ""
+
+[[entries]]
+rust = "write_VCF_to_hdf5"
+rust_path = "src/vireo_snp/utils/vcf_utils.rs"
+other = "write_VCF_to_hdf5"
+other_path = "vireo/vireoSNP/utils/vcf_utils.py"
+other_class = ""
+
+[[entries]]
+rust = "read_sparse_GeneINFO"
+rust_path = "src/vireo_snp/utils/vcf_utils.rs"
+other = "read_sparse_GeneINFO"
+other_path = "vireo/vireoSNP/utils/vcf_utils.py"
+other_class = ""
+
+[[entries]]
+rust = "GenoINFO_maker"
+rust_path = "src/vireo_snp/utils/vcf_utils.rs"
+other = "GenoINFO_maker"
+other_path = "vireo/vireoSNP/utils/vcf_utils.py"
+other_class = ""
+
+[[entries]]
+rust = "write_VCF"
+rust_path = "src/vireo_snp/utils/vcf_utils.rs"
+other = "write_VCF"
+other_path = "vireo/vireoSNP/utils/vcf_utils.py"
+other_class = ""
+
+[[entries]]
+rust = "parse_donor_GPb"
+rust_path = "src/vireo_snp/utils/vcf_utils.rs"
+other = "parse_donor_GPb"
+other_path = "vireo/vireoSNP/utils/vcf_utils.py"
+other_class = ""
+
+[[entries]]
+rust = "parse_GT_code"
+rust_path = "src/vireo_snp/utils/vcf_utils.rs"
+other = "parse_GT_code"
+other_path = "vireo/vireoSNP/utils/vcf_utils.py"
+other_class = ""
+
+[[entries]]
+rust = "match_SNPs"
+rust_path = "src/vireo_snp/utils/vcf_utils.rs"
+other = "match_SNPs"
+other_path = "vireo/vireoSNP/utils/vcf_utils.py"
+other_class = ""
+
+[[entries]]
+rust = "match_VCF_samples"
+rust_path = "src/vireo_snp/utils/vcf_utils.rs"
+other = "match_VCF_samples"
+other_path = "vireo/vireoSNP/utils/vcf_utils.py"
+other_class = ""
+
+[[entries]]
+rust = "snp_gene_match"
+rust_path = "src/vireo_snp/utils/vcf_utils.rs"
+other = "snp_gene_match"
+other_path = "vireo/vireoSNP/utils/vcf_utils.py"
+other_class = ""
+
+[[entries]]
+rust = "get_binom_coeff"
+rust_path = "src/vireo_snp/utils/vireo_base.rs"
+other = "get_binom_coeff"
+other_path = "vireo/vireoSNP/utils/vireo_base.py"
+other_class = ""
+
+[[entries]]
+rust = "logbincoeff"
+rust_path = "src/vireo_snp/utils/vireo_base.rs"
+other = "logbincoeff"
+other_path = "vireo/vireoSNP/utils/vireo_base.py"
+other_class = ""
+
+[[entries]]
+rust = "normalize"
+rust_path = "src/vireo_snp/utils/vireo_base.rs"
+other = "normalize"
+other_path = "vireo/vireoSNP/utils/vireo_base.py"
+other_class = ""
+
+[[entries]]
+rust = "tensor_normalize"
+rust_path = "src/vireo_snp/utils/vireo_base.rs"
+other = "tensor_normalize"
+other_path = "vireo/vireoSNP/utils/vireo_base.py"
+other_class = ""
+
+[[entries]]
+rust = "loglik_amplify"
+rust_path = "src/vireo_snp/utils/vireo_base.rs"
+other = "loglik_amplify"
+other_path = "vireo/vireoSNP/utils/vireo_base.py"
+other_class = ""
+
+[[entries]]
+rust = "beta_entropy"
+rust_path = "src/vireo_snp/utils/vireo_base.rs"
+other = "beta_entropy"
+other_path = "vireo/vireoSNP/utils/vireo_base.py"
+other_class = ""
+
+[[entries]]
+rust = "_beta_cross_entropy"
+rust_path = "src/vireo_snp/utils/vireo_base.rs"
+other = "_beta_cross_entropy"
+other_path = "vireo/vireoSNP/utils/vireo_base.py"
+other_class = ""
+
+[[entries]]
+rust = "r#match"
+rust_path = "src/vireo_snp/utils/vireo_base.rs"
+other = "match"
+other_path = "vireo/vireoSNP/utils/vireo_base.py"
+other_class = ""
+
+[[entries]]
+rust = "optimal_match"
+rust_path = "src/vireo_snp/utils/vireo_base.rs"
+other = "optimal_match"
+other_path = "vireo/vireoSNP/utils/vireo_base.py"
+other_class = ""
+
+[[entries]]
+rust = "greed_match"
+rust_path = "src/vireo_snp/utils/vireo_base.rs"
+other = "greed_match"
+other_path = "vireo/vireoSNP/utils/vireo_base.py"
+other_class = ""
+
+[[entries]]
+rust = "donor_select"
+rust_path = "src/vireo_snp/utils/vireo_base.rs"
+other = "donor_select"
+other_path = "vireo/vireoSNP/utils/vireo_base.py"
+other_class = ""
+
+[[entries]]
+rust = "__init__"
+rust_path = "src/vireo_snp/utils/vireo_bulk.rs"
+rust_class = "VireoBulk"
+other = "__init__"
+other_path = "vireo/vireoSNP/utils/vireo_bulk.py"
+other_class = "VireoBulk"
+
+[[entries]]
+rust = "fit"
+rust_path = "src/vireo_snp/utils/vireo_bulk.rs"
+rust_class = "VireoBulk"
+other = "fit"
+other_path = "vireo/vireoSNP/utils/vireo_bulk.py"
+other_class = "VireoBulk"
+
+[[entries]]
+rust = "LR_test"
+rust_path = "src/vireo_snp/utils/vireo_bulk.rs"
+rust_class = "VireoBulk"
+other = "LR_test"
+other_path = "vireo/vireoSNP/utils/vireo_bulk.py"
+other_class = "VireoBulk"
+
+[[entries]]
+rust = "LikRatio_test"
+rust_path = "src/vireo_snp/utils/vireo_bulk.rs"
+other = "LikRatio_test"
+other_path = "vireo/vireoSNP/utils/vireo_bulk.py"
+other_class = ""
+
+[[entries]]
+rust = "predict_doublet"
+rust_path = "src/vireo_snp/utils/vireo_doublet.rs"
+other = "predict_doublet"
+other_path = "vireo/vireoSNP/utils/vireo_doublet.py"
+other_class = ""
+
+[[entries]]
+rust = "add_doublet_theta"
+rust_path = "src/vireo_snp/utils/vireo_doublet.rs"
+other = "add_doublet_theta"
+other_path = "vireo/vireoSNP/utils/vireo_doublet.py"
+other_class = ""
+
+[[entries]]
+rust = "add_doublet_GT"
+rust_path = "src/vireo_snp/utils/vireo_doublet.rs"
+other = "add_doublet_GT"
+other_path = "vireo/vireoSNP/utils/vireo_doublet.py"
+other_class = ""
+
+[[entries]]
+rust = "_fit_EM_ambient"
+rust_path = "src/vireo_snp/utils/vireo_doublet.rs"
+other = "_fit_EM_ambient"
+other_path = "vireo/vireoSNP/utils/vireo_doublet.py"
+other_class = ""
+
+[[entries]]
+rust = "predit_ambient"
+rust_path = "src/vireo_snp/utils/vireo_doublet.rs"
+other = "predit_ambient"
+other_path = "vireo/vireoSNP/utils/vireo_doublet.py"
+other_class = ""
+
+[[entries]]
+rust = "__init__"
+rust_path = "src/vireo_snp/utils/vireo_model.rs"
+rust_class = "Vireo"
+other = "__init__"
+other_path = "vireo/vireoSNP/utils/vireo_model.py"
+other_class = "Vireo"
+
+[[entries]]
+rust = "set_initial"
+rust_path = "src/vireo_snp/utils/vireo_model.rs"
+rust_class = "Vireo"
+other = "set_initial"
+other_path = "vireo/vireoSNP/utils/vireo_model.py"
+other_class = "Vireo"
+
+[[entries]]
+rust = "set_prior"
+rust_path = "src/vireo_snp/utils/vireo_model.rs"
+rust_class = "Vireo"
+other = "set_prior"
+other_path = "vireo/vireoSNP/utils/vireo_model.py"
+other_class = "Vireo"
+
+[[entries]]
+rust = "theta_s1"
+rust_path = "src/vireo_snp/utils/vireo_model.rs"
+rust_class = "Vireo"
+other = "theta_s1"
+other_path = "vireo/vireoSNP/utils/vireo_model.py"
+other_class = "Vireo"
+
+[[entries]]
+rust = "theta_s2"
+rust_path = "src/vireo_snp/utils/vireo_model.rs"
+rust_class = "Vireo"
+other = "theta_s2"
+other_path = "vireo/vireoSNP/utils/vireo_model.py"
+other_class = "Vireo"
+
+[[entries]]
+rust = "digamma1_"
+rust_path = "src/vireo_snp/utils/vireo_model.rs"
+rust_class = "Vireo"
+other = "digamma1_"
+other_path = "vireo/vireoSNP/utils/vireo_model.py"
+other_class = "Vireo"
+
+[[entries]]
+rust = "digamma2_"
+rust_path = "src/vireo_snp/utils/vireo_model.rs"
+rust_class = "Vireo"
+other = "digamma2_"
+other_path = "vireo/vireoSNP/utils/vireo_model.py"
+other_class = "Vireo"
+
+[[entries]]
+rust = "digammas_"
+rust_path = "src/vireo_snp/utils/vireo_model.rs"
+rust_class = "Vireo"
+other = "digammas_"
+other_path = "vireo/vireoSNP/utils/vireo_model.py"
+other_class = "Vireo"
+
+[[entries]]
+rust = "update_theta_size"
+rust_path = "src/vireo_snp/utils/vireo_model.rs"
+rust_class = "Vireo"
+other = "update_theta_size"
+other_path = "vireo/vireoSNP/utils/vireo_model.py"
+other_class = "Vireo"
+
+[[entries]]
+rust = "update_ID_prob"
+rust_path = "src/vireo_snp/utils/vireo_model.rs"
+rust_class = "Vireo"
+other = "update_ID_prob"
+other_path = "vireo/vireoSNP/utils/vireo_model.py"
+other_class = "Vireo"
+
+[[entries]]
+rust = "update_GT_prob"
+rust_path = "src/vireo_snp/utils/vireo_model.rs"
+rust_class = "Vireo"
+other = "update_GT_prob"
+other_path = "vireo/vireoSNP/utils/vireo_model.py"
+other_class = "Vireo"
+
+[[entries]]
+rust = "get_ELBO"
+rust_path = "src/vireo_snp/utils/vireo_model.rs"
+rust_class = "Vireo"
+other = "get_ELBO"
+other_path = "vireo/vireoSNP/utils/vireo_model.py"
+other_class = "Vireo"
+
+[[entries]]
+rust = "_fit_VB"
+rust_path = "src/vireo_snp/utils/vireo_model.rs"
+rust_class = "Vireo"
+other = "_fit_VB"
+other_path = "vireo/vireoSNP/utils/vireo_model.py"
+other_class = "Vireo"
+
+[[entries]]
+rust = "fit"
+rust_path = "src/vireo_snp/utils/vireo_model.rs"
+rust_class = "Vireo"
+other = "fit"
+other_path = "vireo/vireoSNP/utils/vireo_model.py"
+other_class = "Vireo"
+
+[[entries]]
+rust = "_model_fit"
+rust_path = "src/vireo_snp/utils/vireo_wrap.rs"
+other = "_model_fit"
+other_path = "vireo/vireoSNP/utils/vireo_wrap.py"
+other_class = ""
+
+[[entries]]
+rust = "vireo_wrap"
+rust_path = "src/vireo_snp/utils/vireo_wrap.rs"
+other = "vireo_wrap"
+other_path = "vireo/vireoSNP/utils/vireo_wrap.py"
+other_class = ""

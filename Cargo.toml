@@ -1,0 +1,17 @@
+[package]
+name = "vireo-rs"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+description = "Rust translation scaffold for vireoSNP"
+
+[lib]
+name = "vireo_rs"
+path = "src/lib.rs"
+
+[dependencies]
+ndarray = "0.15"
+rand = "0.8"
+statrs = "0.16"
+flate2 = "1"
+hdf5 = "0.8"
