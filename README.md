@@ -2,7 +2,7 @@
 
 Faithful Rust translation of `vireoSNP`, commit  `e3654633f7663732572c03c5dcf9fb00ec43b653`
 
-* 2026-05-10: Possibly working, near 4x faster due to differences in VCF parsing. May add support for more compact file formats in the future. Same output for 10M reads but need to check corner cases better
+* 2026-05-10: Possibly working, near 4x faster primarily due to differences in VCF parsing. May add support for more compact file formats in the future. Same output for 10M reads but need to check corner cases better. Be vigilant to early translation errors
 
 
 ## This is an LLM-mediated faithful (hopefully) translation, not the original code! 
@@ -151,11 +151,7 @@ These numbers are workload- and machine-specific. The benchmark scripts are incl
 
 ## Citation
 
-If this translation or the original method is used in scientific work, cite:
-
 Yuanhua Huang, Davis J. McCarthy, and Oliver Stegle. Vireo: Bayesian demultiplexing of pooled single-cell RNA-seq data without genotype reference. Genome Biology 20, 273 (2019). <https://genomebiology.biomedcentral.com/articles/10.1186/s13059-019-1865-2>
-
-The upstream README also links a Zenodo DOI badge for the project: <https://zenodo.org/badge/latestdoi/187803798>
 
 
 ## License
