@@ -2,9 +2,15 @@ use rand::rngs::StdRng;
 use rand::seq::SliceRandom;
 use rand::SeedableRng;
 use std::collections::BTreeSet;
+#[cfg(feature = "cli")]
 use std::env;
-use std::fs::{self, File};
-use std::io::{BufRead, BufReader, Write};
+#[cfg(feature = "cli")]
+use std::fs;
+use std::fs::File;
+use std::io::Write;
+#[cfg(feature = "cli")]
+use std::io::{BufRead, BufReader};
+#[cfg(feature = "cli")]
 use std::process::Command;
 
 pub fn show_progress<T>(rv: T) -> T {
@@ -137,6 +143,7 @@ pub fn merge_bams(
     None
 }
 
+#[cfg(feature = "cli")]
 pub fn main() -> Option<()> {
     let args: Vec<String> = env::args().collect();
     if args.len() <= 1 {

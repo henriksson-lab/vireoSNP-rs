@@ -1,13 +1,37 @@
 [package]
-name = "vireo-rs"
+name = "vireosnp-rs"
 version = "0.1.0"
 edition = "2021"
 license = "Apache-2.0"
-description = "Rust translation scaffold for vireoSNP"
+description = "Faithful Rust translation of vireoSNP for single-cell genotype demultiplexing"
+documentation = "https://docs.rs/vireosnp-rs"
+readme = "README.md"
+keywords = ["bioinformatics", "single-cell", "genomics", "demultiplexing", "vireo"]
+categories = ["science"]
+exclude = ["vireo/"]
+
+[features]
+default = []
+cli = []
 
 [lib]
-name = "vireo_rs"
+name = "vireosnp_rs"
 path = "src/lib.rs"
+
+[[bin]]
+name = "vireoSNP"
+path = "bin/vireoSNP.rs"
+required-features = ["cli"]
+
+[[bin]]
+name = "GTbarcode"
+path = "bin/GTbarcode.rs"
+required-features = ["cli"]
+
+[[bin]]
+name = "synth_pool"
+path = "bin/synth_pool.rs"
+required-features = ["cli"]
 
 [dependencies]
 ndarray = "0.15"

@@ -1,11 +1,19 @@
+#[cfg(feature = "cli")]
 use crate::vireo_snp::utils::variant_select;
+#[cfg(feature = "cli")]
 use crate::vireo_snp::utils::vcf_utils;
+#[cfg(feature = "cli")]
 use ndarray::Array2;
+#[cfg(feature = "cli")]
 use std::env;
+#[cfg(feature = "cli")]
 use std::fs::{self, File};
+#[cfg(feature = "cli")]
 use std::io::Write;
+#[cfg(feature = "cli")]
 use std::path::Path;
 
+#[cfg(feature = "cli")]
 pub fn main() -> Option<()> {
     let args: Vec<String> = env::args().collect();
     if args.len() <= 1 {

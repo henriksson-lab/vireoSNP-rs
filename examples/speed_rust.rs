@@ -3,8 +3,8 @@ use std::env;
 use std::io::Write;
 use std::path::Path;
 use std::time::Instant;
-use vireo_rs::vireo_snp::utils::vireo_model::Vireo;
-use vireo_rs::vireo_snp::utils::{io_utils, vcf_utils, vireo_wrap};
+use vireosnp_rs::vireo_snp::utils::vireo_model::Vireo;
+use vireosnp_rs::vireo_snp::utils::{io_utils, vcf_utils, vireo_wrap};
 
 fn dense(mat: &io_utils::CountMatrix) -> ndarray::Array2<f64> {
     match mat {

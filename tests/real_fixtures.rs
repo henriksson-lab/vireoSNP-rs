@@ -1,7 +1,8 @@
 use ndarray::{s, Array1, Array2, Array3};
-use vireo_rs::vireo_snp::plot::base_plot;
-use vireo_rs::vireo_snp::utils::vireo_model::Vireo;
-use vireo_rs::vireo_snp::utils::{
+use vireosnp_rs::fit;
+use vireosnp_rs::vireo_snp::plot::base_plot;
+use vireosnp_rs::vireo_snp::utils::vireo_model::Vireo;
+use vireosnp_rs::vireo_snp::utils::{
     base_utils,
     bmm_model::BinomMixtureVB,
     io_utils, variant_select, vcf_utils, vireo_base,
@@ -736,4 +737,28 @@ fn materializes_minicode_plot_matrix_without_pyvalue() {
     assert_eq!(mat[[0, 0]], 0.0);
     assert_eq!(mat[[1, 1]], 2.0);
     assert_eq!(mat[[2, 2]], 1.0);
+}
+
+#[test]
+fn runs_high_level_fit_api_and_writes_outputs() {
+    let out_dir = std::env::temp_dir().join(format!(
+        "vireo-rs-high-level-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let result = fit("vireo/data/cellSNP_mat")
+        .with_donors("vireo/data/donors.cellSNP.vcf.gz")
+        .genotype_tag("GT")
+        .seed(1)
+        .run()
+        .unwrap();
+    assert_eq!(result.cell_names.len(), result.result.id_prob.nrows());
+    assert!(!result.donor_names.is_empty());
+    result.write_outputs(out_dir.to_string_lossy()).unwrap();
+    assert!(out_dir.join("donor_ids.tsv").exists());
+    assert!(out_dir.join("summary.tsv").exists());
+    std::fs::remove_dir_all(out_dir).unwrap();
 }

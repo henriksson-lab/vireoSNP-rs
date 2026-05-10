@@ -1,15 +1,113 @@
-# vireo-rs
+# vireosnp-rs
 
-Rust translation scaffold for `vireoSNP`, aiming for faithful, identical-output behavior against the original Python implementation.
+Faithful Rust translation of `vireoSNP`, commit  `e3654633f7663732572c03c5dcf9fb00ec43b653`
 
-## Upstream Source
+**ongoing translation**
 
-The original code is checked into this repository under `vireo/`.
+## This is an LLM-mediated faithful (hopefully) translation, not the original code! 
 
-- Upstream repository: <https://github.com/huangyh09/vireo>
-- Translated commit: `e3654633f7663732572c03c5dcf9fb00ec43b653`
-- Original package name: `vireoSNP`
-- Original license: Apache-2.0, copied to [`LICENSE`](LICENSE)
+Most users should probably first see if the existing original code works for them, unless they have reason otherwise. The original source
+may have newer features and it has had more love in terms of fixing bugs. In fact, we aim to replicate bugs if they are present, for the
+sake of reproducibility! (but then we might have added a few more in the process)
+
+There are however cases when you might prefer this Rust version. We generally agree with [this manifesto](https://rewrites.bio/) but more specifically:
+* We have had many issues with ensuring that our software works using existing containers (Docker, PodMan, Singularity). One size does not fit all and it eats our resources trying to keep up with every way of delivering software
+* Common package managers do not work well. It was great when we had a few Linux distributions with stable procedures, but now there are just too many ecosystems (Homebrew, Conda). Conda has an NP-complete resolver which does not scale. Homebrew is only so-stable. And our dependencies in Python still break. These can no longer be considered professional serious options. Meanwhile, Cargo enables multiple versions of packages to be available, even within the same program(!)
+* The future is the web. We deploy software in the web browser, and until now that has meant Javascript. This is a language where even the == operator is broken. Typescript is one step up, but a game changer is the ability to compile Rust code into webassembly, enabling performance and sharing of code with the backend. Translating code to Rust enables new ways of deployment and running code in the browser has especial benefits for science - researchers do not have deep pockets to run servers, so pushing compute to the user enables deployment that otherwise would be impossible
+* Old CLI-based utilities are bad for the environment(!). A large amount of compute resources are spent creating and communicating via small files, which we can bypass by using code as libraries. Even better, we can avoid frequent reloading of databases by hoisting this stage, with up to 100x speedups in some cases. Less compute means faster compute and less electricity wasted
+* LLM-mediated translations may actually be safer to use than the original code. This article shows that [running the same code on different operating systems can give somewhat different answers](https://doi.org/10.1038/nbt.3820). This is a gap that Rust+Cargo can reduce. Typesafe interfaces also reduce coding mistakes and error handling, as opposed to typical command-line scripting
+
+But:
+
+* **This approach should still be considered experimental**. The LLM technology is immature and has sharp corners. But there are opportunities to reap, and the genie is not going back into the bottle. This translation is as much aimed to learn how to improve the technology and get feedback on the results.
+* Translations are not endorsed by the original authors unless otherwise noted. **Do not send bug reports to the original developers**. Use our Github issues page instead.
+* **Do not trust the benchmarks on this page**. They are used to help evaluate the translation. If you want improved performance, you generally have to use this code as a library, and use the additional tricks it offers. We generally accept performance losses in order to reduce our dependency issues
+* **Check the original Github pages for information about the package**. This README is kept sparse on purpose. It is not meant to be the primary source of information
+* **If you are the author of the original code and wish to move to Rust, you can obtain ownership of this repository and crate**. Until then, our commitment is to offer an as-faithful-as-possible translation of a snapshot of your code. If we find serious bugs, we will report them to you. Otherwise we will just replicate them, to ensure comparability across studies that claim to use package XYZ v.666. Think of this like a fancy Ubuntu .deb-package of your software - that is how we treat it
+
+This blurb might be out of date. Go to [this page](https://github.com/henriksson-lab/rustification) for the latest information and further information about how we approach translation
+
+## Usage
+
+### Library
+
+Add the crate with default features disabled:
+
+```toml
+[dependencies]
+vireosnp-rs = { version = "0.1", default-features = false }
+```
+
+The high-level API covers the main Vireo workflow:
+
+```rust
+use vireosnp_rs::{fit, Result};
+
+fn main() -> Result<()> {
+    let result = fit("cellSnp2bOutput")
+        .with_donors("donors.cellSNP.vcf.gz")
+        .genotype_tag("GT")
+        .seed(1)
+        .run()?;
+
+    println!("{} cells assigned", result.cell_names.len());
+    Ok(())
+}
+```
+
+To infer donors without a donor VCF:
+
+```rust
+use vireosnp_rs::{fit, Result};
+
+fn main() -> Result<()> {
+    let result = fit("cellSnp2bOutput")
+        .infer_donors(4)
+        .doublets(true)
+        .run()?;
+
+    result.write_outputs("vireo_out")?;
+    Ok(())
+}
+```
+
+The Rust library name is `vireosnp_rs`, matching the package name `vireosnp-rs`.
+
+Lower-level translated functions remain available under `vireosnp_rs::vireo_snp::utils` for audit-oriented or custom workflows.
+
+The same high-level API is available as a runnable example:
+
+```sh
+cargo run --example high_level -- cellSnp2bOutput donors.cellSNP.vcf.gz vireo_out
+```
+
+### CLI
+
+The command-line entry points are optional and are disabled by default. Install them with the `cli` feature:
+
+```sh
+cargo install vireosnp-rs --features cli
+```
+
+Then run the translated entry points:
+
+```sh
+vireoSNP \
+  --cellData cellSnp2bOutput \
+  --donorFile donors.cellSNP.vcf.gz \
+  --outDir vireo_out
+
+GTbarcode \
+  --vcfFile donors.cellSNP.vcf.gz \
+  --outFile GTbarcode.tsv
+
+synth_pool \
+  --samFiles sample1.bam,sample2.bam \
+  --barcodeFiles sample1.barcodes.tsv,sample2.barcodes.tsv \
+  --noregionFile \
+  --outDir pooled
+```
+
 
 ## Citation
 
@@ -19,27 +117,7 @@ Yuanhua Huang, Davis J. McCarthy, and Oliver Stegle. Vireo: Bayesian demultiplex
 
 The upstream README also links a Zenodo DOI badge for the project: <https://zenodo.org/badge/latestdoi/187803798>
 
-## Translation Plan
 
-This crate starts as a scaffold: each original Python function has a corresponding Rust stub, and each original Python class has a Rust struct. The stubs use `PyValue` placeholders until each function is translated bottom-up.
+## License
 
-Translation should proceed from leaf functions toward callers. Avoid introducing helper functions; if a helper seems necessary, treat that as a sign that the original function boundary or logic has not been translated faithfully enough.
-
-## Audit Tooling
-
-`ccc_mapping.toml` maps Rust functions to original Python functions, including path and class disambiguation. Use `code-complexity-comparator` from `/data/henriksson/github/claude/code-complexity-comparator`:
-
-```sh
-/data/henriksson/github/claude/code-complexity-comparator/target/release/ccc-rs analyze src -l rust --recurse -o rust.json
-/data/henriksson/github/claude/code-complexity-comparator/target/release/ccc-rs analyze vireo -l python --recurse -o python.json
-/data/henriksson/github/claude/code-complexity-comparator/target/release/ccc-rs order python.json -o translation_order.csv
-/data/henriksson/github/claude/code-complexity-comparator/target/release/ccc-rs missing rust.json python.json --mapping ccc_mapping.toml
-```
-
-`gdb-translation-verifier-rs` at `/home/mahogny/github/claude/gdb-translation-verifier-rs` was reviewed. It is primarily useful for compiled C/C++ reference binaries, so it is not directly applicable to this Python-to-Rust port until a comparable executable-level harness exists.
-
-`tracehash-rs` is noted for future deterministic trace hashing once concrete Rust logic and Python comparison harnesses are added.
-
-## Test Data
-
-Prioritize the included real example data under `vireo/data/` and workflows under `vireo/examples/` when building regression tests. Synthetic or tiny unit data should only supplement real-world fixtures.
+Apache-2.0

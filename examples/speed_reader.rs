@@ -1,7 +1,7 @@
 use std::env;
 use std::path::Path;
 use std::time::Instant;
-use vireo_rs::vireo_snp::utils::{io_utils, vcf_utils};
+use vireosnp_rs::vireo_snp::utils::{io_utils, vcf_utils};
 
 fn main() {
     let cell_snp_dir =
