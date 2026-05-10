@@ -1,12 +1,15 @@
+use crate::vireo_snp::plot::base_plot;
 use crate::vireo_snp::utils::io_utils;
 use crate::vireo_snp::utils::vcf_utils;
 use crate::vireo_snp::utils::vireo_wrap::{self, VireoWrapResult};
-use ndarray::Axis;
+use ndarray::{s, Axis};
 #[cfg(feature = "cli")]
 use std::env;
 use std::fmt;
 use std::fs;
 use std::path::Path;
+#[cfg(feature = "cli")]
+use std::process;
 
 pub fn show_progress<T>(rv: T) -> T {
     rv
@@ -20,6 +23,7 @@ pub enum VireoError {
     MissingDonorConfig,
     CreateOutputDirFailed(String),
     ReadCellSnpFailed(String),
+    ReadVartrixFailed(String),
     ReadCellVcfFailed(String),
     ReadCellVcfGenoInfoFailed(String),
     ReadDonorVcfFailed(String),
@@ -27,11 +31,15 @@ pub enum VireoError {
     MissingGenotypeTag(String),
     ParseDonorGenotypeFailed(String),
     MissingLayer(&'static str),
+    InvalidCellRange(String),
     ModelFitFailed,
     DonorOutputFailed(String),
     DonorVcfOutputFailed(String),
     FitFailed,
     OutputFailed(String),
+    CliMissingValue(String),
+    CliInvalidValue { option: String, value: String },
+    CliUnknownOption(String),
 }
 
 impl fmt::Display for VireoError {
@@ -47,6 +55,9 @@ impl fmt::Display for VireoError {
             VireoError::ReadCellSnpFailed(path) => {
                 write!(f, "failed to read cellSNP directory {path}")
             }
+            VireoError::ReadVartrixFailed(path) => {
+                write!(f, "failed to read vartrix inputs {path}")
+            }
             VireoError::ReadCellVcfFailed(path) => write!(f, "failed to read cell VCF {path}"),
             VireoError::ReadCellVcfGenoInfoFailed(path) => {
                 write!(f, "failed to materialize AD/DP layers from cell VCF {path}")
@@ -60,6 +71,7 @@ impl fmt::Display for VireoError {
                 write!(f, "failed to parse donor genotype tag {tag}")
             }
             VireoError::MissingLayer(layer) => write!(f, "cell data is missing {layer} layer"),
+            VireoError::InvalidCellRange(range) => write!(f, "invalid cell range {range}"),
             VireoError::ModelFitFailed => write!(f, "vireo model fit failed"),
             VireoError::DonorOutputFailed(path) => {
                 write!(f, "failed to write donor assignment outputs to {path}")
@@ -69,6 +81,15 @@ impl fmt::Display for VireoError {
             }
             VireoError::FitFailed => write!(f, "vireo fit failed"),
             VireoError::OutputFailed(path) => write!(f, "failed to write vireo outputs to {path}"),
+            VireoError::CliMissingValue(option) => {
+                write!(f, "missing value for command-line option {option}")
+            }
+            VireoError::CliInvalidValue { option, value } => {
+                write!(f, "invalid value {value} for command-line option {option}")
+            }
+            VireoError::CliUnknownOption(option) => {
+                write!(f, "unknown command-line option {option}")
+            }
         }
     }
 }
@@ -82,12 +103,85 @@ pub fn fit(cell_data: impl Into<String>) -> FitBuilder {
     VireoSnpBuilder::new().cell_data(cell_data)
 }
 
+fn subset_count_matrix_columns(
+    mat: &io_utils::CountMatrix,
+    start: usize,
+    end: usize,
+) -> Option<io_utils::CountMatrix> {
+    match mat {
+        io_utils::CountMatrix::Dense(x) => {
+            if start > end || end > x.ncols() {
+                return None;
+            }
+            Some(io_utils::CountMatrix::Dense(
+                x.slice(s![.., start..end]).to_owned(),
+            ))
+        }
+        io_utils::CountMatrix::DenseU32(x) => {
+            if start > end || end > x.ncols() {
+                return None;
+            }
+            Some(io_utils::CountMatrix::DenseU32(
+                x.slice(s![.., start..end]).to_owned(),
+            ))
+        }
+        io_utils::CountMatrix::SparseCsc {
+            nrows,
+            ncols,
+            indptr,
+            indices,
+            data,
+        } => {
+            if start > end || end > *ncols {
+                return None;
+            }
+            let mut out_indptr = Vec::with_capacity(end - start + 1);
+            let mut out_indices = Vec::new();
+            let mut out_data = Vec::new();
+            out_indptr.push(0);
+            for col in start..end {
+                for p in indptr[col]..indptr[col + 1] {
+                    out_indices.push(indices[p]);
+                    out_data.push(data[p]);
+                }
+                out_indptr.push(out_indices.len());
+            }
+            Some(io_utils::CountMatrix::SparseCsc {
+                nrows: *nrows,
+                ncols: end - start,
+                indptr: out_indptr,
+                indices: out_indices,
+                data: out_data,
+            })
+        }
+    }
+}
+
+fn subset_cell_range(cell_dat: &mut io_utils::CellData, start: usize, end: usize) -> Result<()> {
+    if start > end {
+        return Err(VireoError::InvalidCellRange(format!("{start}-{end}")));
+    }
+    if !cell_dat.samples.is_empty() {
+        if end > cell_dat.samples.len() {
+            return Err(VireoError::InvalidCellRange(format!("{start}-{end}")));
+        }
+        cell_dat.samples = cell_dat.samples[start..end].to_vec();
+    }
+    for mat in cell_dat.layers.values_mut() {
+        *mat = subset_count_matrix_columns(mat, start, end)
+            .ok_or_else(|| VireoError::InvalidCellRange(format!("{start}-{end}")))?;
+    }
+    Ok(())
+}
+
 #[derive(Clone, Debug)]
 pub struct VireoSnpBuilder {
     pub cell_data: Option<String>,
+    pub vartrix_data: Option<String>,
     pub donor_file: Option<String>,
     pub n_donor: Option<i64>,
     pub out_dir: Option<String>,
+    pub cell_range: Option<(usize, usize)>,
     pub geno_tag: String,
     pub no_doublet: bool,
     pub n_init: i64,
@@ -96,8 +190,10 @@ pub struct VireoSnpBuilder {
     pub force_learn_gt: bool,
     pub ase_mode: bool,
     pub check_ambient: bool,
+    pub nproc: usize,
     pub rand_seed: Option<u64>,
     pub write_outputs: bool,
+    pub no_plot: bool,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -113,9 +209,11 @@ impl Default for VireoSnpBuilder {
     fn default() -> Self {
         Self {
             cell_data: None,
+            vartrix_data: None,
             donor_file: None,
             n_donor: None,
             out_dir: None,
+            cell_range: None,
             geno_tag: "PL".to_string(),
             no_doublet: false,
             n_init: 50,
@@ -124,8 +222,10 @@ impl Default for VireoSnpBuilder {
             force_learn_gt: false,
             ase_mode: false,
             check_ambient: false,
+            nproc: 1,
             rand_seed: None,
             write_outputs: false,
+            no_plot: false,
         }
     }
 }
@@ -137,6 +237,11 @@ impl VireoSnpBuilder {
 
     pub fn cell_data(mut self, path: impl Into<String>) -> Self {
         self.cell_data = Some(path.into());
+        self
+    }
+
+    pub fn vartrix_data(mut self, files: impl Into<String>) -> Self {
+        self.vartrix_data = Some(files.into());
         self
     }
 
@@ -166,6 +271,11 @@ impl VireoSnpBuilder {
 
     pub fn geno_tag(mut self, value: impl Into<String>) -> Self {
         self.geno_tag = value.into();
+        self
+    }
+
+    pub fn cell_range(mut self, start: usize, end: usize) -> Self {
+        self.cell_range = Some((start, end));
         self
     }
 
@@ -218,6 +328,11 @@ impl VireoSnpBuilder {
         self
     }
 
+    pub fn nproc(mut self, value: usize) -> Self {
+        self.nproc = value.max(1);
+        self
+    }
+
     pub fn rand_seed(mut self, value: u64) -> Self {
         self.rand_seed = Some(value);
         self
@@ -232,16 +347,29 @@ impl VireoSnpBuilder {
         self
     }
 
+    pub fn no_plot(mut self, value: bool) -> Self {
+        self.no_plot = value;
+        self
+    }
+
     pub fn fit(self) -> Option<VireoSnpResult> {
         self.run().ok()
     }
 
     pub fn run(mut self) -> Result<FitResult> {
-        let cell_data_path = self.cell_data.clone().ok_or(VireoError::MissingCellData)?;
+        let input_path = self
+            .cell_data
+            .clone()
+            .or_else(|| {
+                self.vartrix_data
+                    .as_ref()
+                    .and_then(|v| v.split(',').next().map(|x| x.to_string()))
+            })
+            .ok_or(VireoError::MissingCellData)?;
         let out_dir = self.out_dir.clone().or_else(|| {
             if self.write_outputs {
-                let input = fs::canonicalize(&cell_data_path)
-                    .unwrap_or_else(|_| Path::new(&cell_data_path).to_path_buf());
+                let input = fs::canonicalize(&input_path)
+                    .unwrap_or_else(|_| Path::new(&input_path).to_path_buf());
                 Some(
                     input
                         .parent()
@@ -259,39 +387,62 @@ impl VireoSnpBuilder {
                 return Err(VireoError::CreateOutputDirFailed(out_dir.clone()));
             }
         }
-        let mut cell_dat = if Path::new(&cell_data_path).is_dir() {
-            io_utils::read_cellSNP(&cell_data_path, None)
-                .ok_or_else(|| VireoError::ReadCellSnpFailed(cell_data_path.clone()))?
-        } else {
-            let cell_vcf = vcf_utils::load_VCF(&cell_data_path, true, true, true, None)
-                .ok_or_else(|| VireoError::ReadCellVcfFailed(cell_data_path.clone()))?;
-            let layers = match &cell_vcf.geno_info {
-                Some(value) => {
-                    let keys = ["AD".to_string(), "DP".to_string()];
-                    vcf_utils::read_sparse_GeneINFO(value, Some(&keys), None)
-                        .ok_or_else(|| {
-                            VireoError::ReadCellVcfGenoInfoFailed(cell_data_path.clone())
-                        })?
-                        .into_iter()
-                        .map(|(k, v)| (k, io_utils::CountMatrix::Dense(v)))
-                        .collect()
-                }
-                _ => {
-                    return Err(VireoError::ReadCellVcfGenoInfoFailed(
-                        cell_data_path.clone(),
-                    ))
-                }
-            };
-            io_utils::CellData {
-                variants: cell_vcf.variants,
-                fixed_info: cell_vcf.fixed_info,
-                contigs: cell_vcf.contigs,
-                comments: cell_vcf.comments,
-                samples: cell_vcf.samples,
-                layers,
+        let mut cell_dat = if let Some(vartrix_data) = &self.vartrix_data {
+            let mut files: Vec<&str> = vartrix_data.split(',').collect();
+            if files.len() == 3 {
+                files.push("");
             }
+            if files.len() != 4 {
+                return Err(VireoError::ReadVartrixFailed(vartrix_data.clone()));
+            }
+            let vcf_file = if files[3].is_empty() {
+                None
+            } else {
+                Some(files[3])
+            };
+            io_utils::read_vartrix(files[0], files[1], files[2], vcf_file)
+                .ok_or_else(|| VireoError::ReadVartrixFailed(vartrix_data.clone()))?
+        } else if let Some(cell_data_path) = &self.cell_data {
+            if Path::new(cell_data_path).is_dir() {
+                io_utils::read_cellSNP(cell_data_path, None)
+                    .ok_or_else(|| VireoError::ReadCellSnpFailed(cell_data_path.clone()))?
+            } else {
+                let cell_vcf = vcf_utils::load_VCF(cell_data_path, true, true, true, None)
+                    .ok_or_else(|| VireoError::ReadCellVcfFailed(cell_data_path.clone()))?;
+                let layers = match &cell_vcf.geno_info {
+                    Some(value) => {
+                        let keys = ["AD".to_string(), "DP".to_string()];
+                        vcf_utils::read_sparse_GeneINFO(value, Some(&keys), None)
+                            .ok_or_else(|| {
+                                VireoError::ReadCellVcfGenoInfoFailed(cell_data_path.clone())
+                            })?
+                            .into_iter()
+                            .map(|(k, v)| (k, io_utils::CountMatrix::Dense(v)))
+                            .collect()
+                    }
+                    _ => {
+                        return Err(VireoError::ReadCellVcfGenoInfoFailed(
+                            cell_data_path.clone(),
+                        ))
+                    }
+                };
+                io_utils::CellData {
+                    variants: cell_vcf.variants,
+                    fixed_info: cell_vcf.fixed_info,
+                    contigs: cell_vcf.contigs,
+                    comments: cell_vcf.comments,
+                    samples: cell_vcf.samples,
+                    layers,
+                }
+            }
+        } else {
+            return Err(VireoError::MissingCellData);
         };
+        if let Some((start, end)) = self.cell_range {
+            subset_cell_range(&mut cell_dat, start, end)?;
+        }
         let mut donor_gpb = None;
+        let mut donor_names_in = None;
         let donor_names;
         let mut learn_gt = true;
         if let Some(donor_file) = self.donor_file {
@@ -313,6 +464,7 @@ impl VireoSnpBuilder {
                 .ok_or_else(|| VireoError::ParseDonorGenotypeFailed(self.geno_tag.clone()))?;
             let donor_count = donor_gpb_arr.shape()[1] as i64;
             donor_gpb = Some(donor_gpb_arr);
+            donor_names_in = Some(donor_vcf.samples.clone());
             match self.n_donor {
                 None => {
                     self.n_donor = Some(donor_count);
@@ -411,7 +563,7 @@ impl VireoSnpBuilder {
             n_extra_donor as usize,
             Some(&self.extra_donor_mode),
             self.check_ambient,
-            1,
+            self.nproc,
             self.ase_mode,
             false,
             3,
@@ -427,6 +579,21 @@ impl VireoSnpBuilder {
                 .is_none()
             {
                 return Err(VireoError::DonorOutputFailed(out_dir.clone()));
+            }
+            if !self.no_plot {
+                let donor_gpb_for_plot = if learn_gt { donor_gpb.as_ref() } else { None };
+                let donor_names_in_for_plot = if learn_gt {
+                    donor_names_in.as_deref()
+                } else {
+                    None
+                };
+                base_plot::plot_GT(
+                    out_dir,
+                    &res.gt_prob,
+                    &donor_names,
+                    donor_gpb_for_plot,
+                    donor_names_in_for_plot,
+                );
             }
         }
         if let Some(out_dir) = out_dir
@@ -488,76 +655,128 @@ impl VireoSnpResult {
 }
 
 #[cfg(feature = "cli")]
-pub fn main() -> Option<VireoWrapResult> {
-    let args: Vec<String> = env::args().collect();
-    if args.len() <= 1 {
-        return None;
+fn cli_value(args: &[String], index: &mut usize, option: &str) -> Result<String> {
+    *index += 1;
+    let value = args
+        .get(*index)
+        .ok_or_else(|| VireoError::CliMissingValue(option.to_string()))?;
+    if value.starts_with('-') {
+        return Err(VireoError::CliMissingValue(option.to_string()));
     }
+    Ok(value.clone())
+}
+
+#[cfg(feature = "cli")]
+fn parse_cli_value<T>(args: &[String], index: &mut usize, option: &str) -> Result<T>
+where
+    T: std::str::FromStr,
+{
+    let value = cli_value(args, index, option)?;
+    value.parse::<T>().map_err(|_| VireoError::CliInvalidValue {
+        option: option.to_string(),
+        value,
+    })
+}
+
+#[cfg(feature = "cli")]
+pub fn builder_from_cli_args(args: &[String]) -> Result<VireoSnpBuilder> {
     let mut builder = VireoSnpBuilder::new().write_outputs(true);
-    let mut i = 1;
+    let mut i = 0;
     while i < args.len() {
-        match args[i].as_str() {
+        let option = args[i].clone();
+        match option.as_str() {
             "--cellData" | "-c" => {
-                i += 1;
-                if let Some(v) = args.get(i) {
-                    builder = builder.cell_data(v.clone());
-                }
+                let v = cli_value(args, &mut i, &option)?;
+                builder = builder.cell_data(v);
+            }
+            "--vartrixData" => {
+                let v = cli_value(args, &mut i, &option)?;
+                builder = builder.vartrix_data(v);
             }
             "--donorFile" | "-d" => {
-                i += 1;
-                if let Some(v) = args.get(i) {
-                    builder = builder.donor_file(v.clone());
-                }
+                let v = cli_value(args, &mut i, &option)?;
+                builder = builder.donor_file(v);
             }
             "--nDonor" | "-N" => {
-                i += 1;
-                if let Some(v) = args.get(i).and_then(|v| v.parse::<i64>().ok()) {
-                    builder = builder.n_donor(v);
-                }
+                let v = parse_cli_value::<i64>(args, &mut i, &option)?;
+                builder = builder.n_donor(v);
             }
             "--outDir" | "-o" => {
-                i += 1;
-                if let Some(v) = args.get(i) {
-                    builder = builder.out_dir(v.clone());
-                }
+                let v = cli_value(args, &mut i, &option)?;
+                builder = builder.out_dir(v);
             }
             "--genoTag" | "-t" => {
-                i += 1;
-                if let Some(v) = args.get(i) {
-                    builder = builder.geno_tag(v.clone());
-                }
+                let v = cli_value(args, &mut i, &option)?;
+                builder = builder.geno_tag(v);
             }
             "--noDoublet" => builder = builder.no_doublet(true),
-            "--nInit" | "-M" => {
-                i += 1;
-                if let Some(v) = args.get(i).and_then(|v| v.parse::<i64>().ok()) {
-                    builder = builder.n_init(v);
+            "--noPlot" => builder = builder.no_plot(true),
+            "--cellRange" => {
+                let value = cli_value(args, &mut i, &option)?;
+                let parts: Vec<&str> = value.split('-').collect();
+                if parts.len() != 2 {
+                    return Err(VireoError::InvalidCellRange(value));
                 }
+                let start = parts[0]
+                    .parse::<usize>()
+                    .map_err(|_| VireoError::InvalidCellRange(value.clone()))?;
+                let end = parts[1]
+                    .parse::<usize>()
+                    .map_err(|_| VireoError::InvalidCellRange(value.clone()))?;
+                builder = builder.cell_range(start, end);
+            }
+            "--nInit" | "-M" => {
+                let v = parse_cli_value::<i64>(args, &mut i, &option)?;
+                builder = builder.n_init(v);
             }
             "--extraDonor" => {
-                i += 1;
-                if let Some(v) = args.get(i).and_then(|v| v.parse::<i64>().ok()) {
-                    builder = builder.extra_donor(v);
-                }
+                let v = parse_cli_value::<i64>(args, &mut i, &option)?;
+                builder = builder.extra_donor(v);
             }
             "--extraDonorMode" => {
-                i += 1;
-                if let Some(v) = args.get(i) {
-                    builder = builder.extra_donor_mode(v.clone());
-                }
+                let v = cli_value(args, &mut i, &option)?;
+                builder = builder.extra_donor_mode(v);
             }
             "--forceLearnGT" => builder = builder.force_learn_gt(true),
             "--ASEmode" => builder = builder.ase_mode(true),
             "--callAmbientRNAs" => builder = builder.check_ambient(true),
-            "--randSeed" => {
-                i += 1;
-                if let Some(v) = args.get(i).and_then(|v| v.parse::<u64>().ok()) {
-                    builder = builder.rand_seed(v);
-                }
+            "--nproc" | "-p" => {
+                let v = parse_cli_value::<usize>(args, &mut i, &option)?;
+                builder = builder.nproc(v);
             }
-            _ => {}
+            "--randSeed" => {
+                let v = parse_cli_value::<u64>(args, &mut i, &option)?;
+                builder = builder.rand_seed(v);
+            }
+            value if value.starts_with('-') => {
+                return Err(VireoError::CliUnknownOption(value.to_string()));
+            }
+            value => {
+                return Err(VireoError::CliUnknownOption(value.to_string()));
+            }
         }
         i += 1;
     }
-    builder.fit().map(|x| x.result)
+    Ok(builder)
+}
+
+#[cfg(feature = "cli")]
+pub fn run_cli(args: &[String]) -> Result<Option<VireoWrapResult>> {
+    if args.is_empty() {
+        return Ok(None);
+    }
+    let builder = builder_from_cli_args(args)?;
+    Ok(builder.fit().map(|x| x.result))
+}
+
+#[cfg(feature = "cli")]
+pub fn main() -> Option<VireoWrapResult> {
+    let args: Vec<String> = env::args().skip(1).collect();
+    match run_cli(&args) {
+        Ok(result) => result,
+        Err(err) => {
+            eprintln!("{err}");
+            process::exit(2);
+        }
+    }
 }

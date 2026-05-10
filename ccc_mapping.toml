@@ -1,6 +1,7 @@
 ignore_rust = [
   "fmt",
   "default",
+  "main",
   "new",
   "cell_data",
   "donor_file",
@@ -19,11 +20,38 @@ ignore_rust = [
   "force_learn_gt",
   "ase_mode",
   "check_ambient",
+  "nproc",
   "rand_seed",
   "seed",
   "write_outputs",
-  "run",
+  "no_plot",
+  "vartrix_data",
+  "cell_range",
   "fit",
+  "cli_value",
+  "parse_cli_value",
+  "builder_from_cli_args",
+  "run_cli",
+  "flatten_gt_by_donor",
+  "fit_initial_model",
+  "hungarian_minimize",
+  "subset_gt_donors",
+  "reorder_id_donors",
+  "with_rng_seed",
+  "set_rng_seed",
+  "matrix_range",
+  "heat_color",
+  "draw_heat_matrix",
+  "save_heat_matrix",
+  "save_heat_matrix_pdf",
+  "gt_distance_format",
+  "save_minicode_plot",
+  "ordered_unique",
+  "annotation_order",
+  "anno_heat_ordered",
+  "save_anno_heat",
+  "subset_count_matrix_columns",
+  "subset_cell_range",
 ]
 
 [[entries]]
@@ -83,8 +111,9 @@ other_path = "vireo/vireoSNP/vireo.py"
 other_class = ""
 
 [[entries]]
-rust = "main"
+rust = "run"
 rust_path = "src/vireo_snp/vireo.rs"
+rust_class = "VireoSnpBuilder"
 other = "main"
 other_path = "vireo/vireoSNP/vireo.py"
 other_class = ""

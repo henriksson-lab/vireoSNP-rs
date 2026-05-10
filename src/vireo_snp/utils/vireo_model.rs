@@ -21,6 +21,7 @@ pub struct Vireo {
     pub n_cell: usize,
     pub n_donor: usize,
     pub n_var: usize,
+    pub rng_seed: u64,
     pub theta_s1_prior: Array2<f64>,
     pub theta_s2_prior: Array2<f64>,
 }
@@ -52,6 +53,15 @@ impl Vireo {
         self.elbo_.clear();
         self.set_initial(beta_mu_init, beta_sum_init, id_prob_init, gt_prob_init)?;
         self.set_prior(None, None, None, None, None)
+    }
+
+    pub fn with_rng_seed(mut self, seed: u64) -> Self {
+        self.rng_seed = seed;
+        self
+    }
+
+    pub fn set_rng_seed(&mut self, seed: u64) {
+        self.rng_seed = seed;
     }
 
     pub fn set_initial(
@@ -86,7 +96,7 @@ impl Vireo {
             None => Array2::from_elem((theta_len, n_gt), 50.0),
             Some(value) => value,
         };
-        let mut rng = StdRng::seed_from_u64(0);
+        let mut rng = StdRng::seed_from_u64(self.rng_seed);
         self.id_prob = match id_prob_init {
             None => {
                 let mut id = Array2::<f64>::zeros((n_cell, n_donor));

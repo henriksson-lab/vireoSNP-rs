@@ -1,4 +1,6 @@
 #[cfg(feature = "cli")]
+use crate::vireo_snp::plot::base_plot;
+#[cfg(feature = "cli")]
 use crate::vireo_snp::utils::variant_select;
 #[cfg(feature = "cli")]
 use crate::vireo_snp::utils::vcf_utils;
@@ -23,6 +25,9 @@ pub fn main() -> Option<()> {
     let mut out_file = None;
     let mut geno_tag = "GT".to_string();
     let mut no_homo_alt = false;
+    let mut no_plot = false;
+    let mut fig_size = (4.0, 2.0);
+    let mut fig_format = "png".to_string();
     let mut rand_seed = None;
     let mut i = 1;
     while i < args.len() {
@@ -42,6 +47,22 @@ pub fn main() -> Option<()> {
                 }
             }
             "--noHomoAlt" => no_homo_alt = true,
+            "--noPlot" => no_plot = true,
+            "--figSize" => {
+                i += 1;
+                if let Some(v) = args.get(i) {
+                    let parts: Vec<f64> = v.split(',').filter_map(|x| x.parse().ok()).collect();
+                    if parts.len() == 2 {
+                        fig_size = (parts[0], parts[1]);
+                    }
+                }
+            }
+            "--figFormat" => {
+                i += 1;
+                if let Some(v) = args.get(i) {
+                    fig_format = v.clone();
+                }
+            }
             "--randSeed" => {
                 i += 1;
                 rand_seed = args.get(i).and_then(|v| v.parse::<u64>().ok());
@@ -116,24 +137,36 @@ pub fn main() -> Option<()> {
         var_use.push(var_ids[old_i].clone());
     }
     let seed = rand_seed.unwrap_or(0);
-    let variant_set = match variant_select::variant_select(&gt_use, Some(&dp_values), seed) {
-        Some((_, _, v)) => v,
-        None => return None,
-    };
-    let mut f = match File::create(out_file) {
+    let (barcode_set, variant_set) =
+        match variant_select::variant_select(&gt_use, Some(&dp_values), seed) {
+            Some((_, barcode_set, variant_set)) => (barcode_set, variant_set),
+            None => return None,
+        };
+    let mut f = match File::create(&out_file) {
         Ok(f) => f,
         Err(_) => return None,
     };
     let mut header = vec!["variants".to_string()];
-    header.extend(sample_ids);
+    header.extend(sample_ids.iter().cloned());
     if writeln!(f, "{}", header.join("\t")).is_err() {
         return None;
     }
-    for i in variant_set {
+    for &i in &variant_set {
         let values: Vec<String> = gt_use.row(i).iter().map(|v| format!("{v:.0}")).collect();
         if writeln!(f, "{}\t{}", var_use[i], values.join("\t")).is_err() {
             return None;
         }
+    }
+    if !no_plot {
+        let selected_vars: Vec<String> = variant_set.iter().map(|&i| var_use[i].clone()).collect();
+        base_plot::save_minicode_plot(
+            &out_file,
+            &barcode_set,
+            Some(&selected_vars),
+            Some(&sample_ids),
+            fig_size,
+            &fig_format,
+        )?;
     }
     Some(())
 }

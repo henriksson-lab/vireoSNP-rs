@@ -2,6 +2,8 @@ use crate::vireo_snp::utils::vireo_base;
 use crate::vireo_snp::utils::vireo_doublet;
 use crate::vireo_snp::utils::vireo_model::Vireo;
 use ndarray::{Array2, Array3};
+#[cfg(feature = "parallel")]
+use rayon::prelude::*;
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct VireoWrapResult {
@@ -30,6 +32,84 @@ pub fn _model_fit(
     Some(model)
 }
 
+fn flatten_gt_by_donor(gt: &Array3<f64>) -> Array2<f64> {
+    let mut out = Array2::<f64>::zeros((gt.shape()[0] * gt.shape()[2], gt.shape()[1]));
+    for v in 0..gt.shape()[0] {
+        for d in 0..gt.shape()[1] {
+            for g in 0..gt.shape()[2] {
+                out[[v * gt.shape()[2] + g, d]] = gt[[v, d, g]];
+            }
+        }
+    }
+    out
+}
+
+fn subset_gt_donors(gt: &Array3<f64>, donors: &[usize]) -> Array3<f64> {
+    let mut out = Array3::<f64>::zeros((gt.shape()[0], donors.len(), gt.shape()[2]));
+    for v in 0..gt.shape()[0] {
+        for (new_d, &old_d) in donors.iter().enumerate() {
+            for g in 0..gt.shape()[2] {
+                out[[v, new_d, g]] = gt[[v, old_d, g]];
+            }
+        }
+    }
+    out
+}
+
+fn reorder_id_donors(id_prob: &Array2<f64>, donors: &[usize]) -> Array2<f64> {
+    let mut out = Array2::<f64>::zeros((id_prob.nrows(), donors.len()));
+    for (new_d, &old_d) in donors.iter().enumerate() {
+        out.column_mut(new_d).assign(&id_prob.column(old_d));
+    }
+    out
+}
+
+fn fit_initial_model(
+    im: usize,
+    ad_arr: &Array2<f64>,
+    dp_arr: &Array2<f64>,
+    gt_prior_use: Option<&Array3<f64>>,
+    n_donor_use: usize,
+    n_gt_usize: usize,
+    learn_gt_bool: bool,
+    ase_mode_bool: bool,
+    fix_beta_sum_bool: bool,
+    max_iter_init_usize: usize,
+    delay_fit_theta_usize: usize,
+    random_seed: u64,
+) -> Option<Vireo> {
+    let mut model = Vireo::default();
+    model.set_rng_seed(random_seed.wrapping_add(im as u64));
+    let gt_init = gt_prior_use.cloned();
+    model.__init__(
+        ad_arr.ncols(),
+        ad_arr.nrows(),
+        n_donor_use,
+        n_gt_usize,
+        learn_gt_bool,
+        true,
+        ase_mode_bool,
+        fix_beta_sum_bool,
+        None,
+        None,
+        None,
+        gt_init.clone(),
+    )?;
+    model.set_prior(gt_init, None, None, None, None)?;
+    model.fit(
+        ad_arr,
+        dp_arr,
+        max_iter_init_usize,
+        5,
+        None,
+        delay_fit_theta_usize,
+        false,
+        None,
+        1,
+    )?;
+    Some(model)
+}
+
 pub fn vireo_wrap(
     ad_arr: &Array2<f64>,
     dp_arr: &Array2<f64>,
@@ -37,14 +117,14 @@ pub fn vireo_wrap(
     n_donor: Option<usize>,
     learn_gt_bool: bool,
     mut n_init: usize,
-    _random_seed: Option<u64>,
+    random_seed: Option<u64>,
     check_doublet: bool,
     max_iter_init_usize: usize,
     delay_fit_theta_usize: usize,
     mut n_extra_donor: usize,
     extra_donor_mode_str: Option<&str>,
-    _check_ambient: bool,
-    _nproc: usize,
+    check_ambient: bool,
+    nproc: usize,
     ase_mode_bool: bool,
     fix_beta_sum_bool: bool,
     n_gt_usize: usize,
@@ -60,9 +140,10 @@ pub fn vireo_wrap(
     if !learn_gt_bool && n_init > 1 {
         n_init = 1;
     }
-    let n_donor_use = n_donor_base + n_extra_donor;
+    let mut n_donor_use = n_donor_base + n_extra_donor;
     let gt_prior_use: Option<Array3<f64>> = if let Some(gt) = gt_prior_arr {
         if n_donor_use <= gt.shape()[1] {
+            n_donor_use = gt.shape()[1];
             Some(gt.clone())
         } else {
             None
@@ -70,38 +151,67 @@ pub fn vireo_wrap(
     } else {
         None
     };
-    let mut models = Vec::new();
-    for _ in 0..n_init {
-        let mut model = Vireo::default();
-        let gt_init = gt_prior_use.clone();
-        model.__init__(
-            ad_arr.ncols(),
-            ad_arr.nrows(),
-            n_donor_use,
-            n_gt_usize,
-            learn_gt_bool,
-            true,
-            ase_mode_bool,
-            fix_beta_sum_bool,
-            None,
-            None,
-            None,
-            gt_init.clone(),
-        )?;
-        model.set_prior(gt_init, None, None, None, None)?;
-        model.fit(
-            ad_arr,
-            dp_arr,
-            max_iter_init_usize,
-            5,
-            None,
-            delay_fit_theta_usize,
-            false,
-            None,
-            1,
-        )?;
-        models.push(model);
-    }
+    let random_seed = random_seed.unwrap_or(0);
+    #[cfg(feature = "parallel")]
+    let mut models: Vec<Vireo> = if nproc > 1 && n_init > 1 {
+        (0..n_init)
+            .into_par_iter()
+            .map(|im| {
+                fit_initial_model(
+                    im,
+                    ad_arr,
+                    dp_arr,
+                    gt_prior_use.as_ref(),
+                    n_donor_use,
+                    n_gt_usize,
+                    learn_gt_bool,
+                    ase_mode_bool,
+                    fix_beta_sum_bool,
+                    max_iter_init_usize,
+                    delay_fit_theta_usize,
+                    random_seed,
+                )
+            })
+            .collect::<Option<Vec<_>>>()?
+    } else {
+        (0..n_init)
+            .map(|im| {
+                fit_initial_model(
+                    im,
+                    ad_arr,
+                    dp_arr,
+                    gt_prior_use.as_ref(),
+                    n_donor_use,
+                    n_gt_usize,
+                    learn_gt_bool,
+                    ase_mode_bool,
+                    fix_beta_sum_bool,
+                    max_iter_init_usize,
+                    delay_fit_theta_usize,
+                    random_seed,
+                )
+            })
+            .collect::<Option<Vec<_>>>()?
+    };
+    #[cfg(not(feature = "parallel"))]
+    let mut models: Vec<Vireo> = (0..n_init)
+        .map(|im| {
+            fit_initial_model(
+                im,
+                ad_arr,
+                dp_arr,
+                gt_prior_use.as_ref(),
+                n_donor_use,
+                n_gt_usize,
+                learn_gt_bool,
+                ase_mode_bool,
+                fix_beta_sum_bool,
+                max_iter_init_usize,
+                delay_fit_theta_usize,
+                random_seed,
+            )
+        })
+        .collect::<Option<Vec<_>>>()?;
     let elbo_all: Vec<f64> = models
         .iter()
         .map(|m| *m.elbo_.last().unwrap_or(&f64::NEG_INFINITY))
@@ -121,6 +231,7 @@ pub fn vireo_wrap(
         let id_prob =
             vireo_base::donor_select(&gt_prob, &id_prob_arr, n_donor_base, extra_donor_mode_str)?;
         let mut next = Vireo::default();
+        next.set_rng_seed(random_seed.wrapping_add(n_init as u64));
         let beta_mu = Some(model.beta_mu.clone());
         let beta_sum = Some(model.beta_sum.clone());
         let id_prob = Some(id_prob);
@@ -152,6 +263,71 @@ pub fn vireo_wrap(
             1,
         )?;
         model = next;
+    }
+    if let Some(gt_prior) = gt_prior_arr {
+        if n_donor_base < gt_prior.shape()[1] {
+            let mut donor_idx: Vec<usize> = (0..model.id_prob.ncols()).collect();
+            donor_idx.sort_by(|&a, &b| {
+                let sa = model.id_prob.column(a).sum();
+                let sb = model.id_prob.column(b).sum();
+                sb.total_cmp(&sa)
+            });
+            donor_idx.truncate(n_donor_base);
+            let gt_prior_use = subset_gt_donors(gt_prior, &donor_idx);
+            let mut next = Vireo::default();
+            next.set_rng_seed(random_seed.wrapping_add(n_init as u64 + 1));
+            next.__init__(
+                ad_arr.ncols(),
+                ad_arr.nrows(),
+                n_donor_base,
+                n_gt_usize,
+                false,
+                true,
+                ase_mode_bool,
+                fix_beta_sum_bool,
+                None,
+                None,
+                None,
+                Some(gt_prior_use),
+            )?;
+            next.fit(ad_arr, dp_arr, 200, 20, None, 0, false, None, 1)?;
+            model = next;
+        } else if n_donor_base > gt_prior.shape()[1] {
+            let mut gt_prior_use = model.gt_prob.clone();
+            let ref_gt = flatten_gt_by_donor(gt_prior);
+            let new_gt = flatten_gt_by_donor(&gt_prior_use);
+            let (_, idx, _) = vireo_base::optimal_match(&ref_gt, &new_gt, Some(1), false)?;
+            for v in 0..gt_prior.shape()[0] {
+                for (prior_d, &target_d) in idx.iter().enumerate() {
+                    for g in 0..gt_prior.shape()[2] {
+                        gt_prior_use[[v, target_d, g]] = gt_prior[[v, prior_d, g]];
+                    }
+                }
+            }
+            let mut idx_order = idx.clone();
+            idx_order.extend((0..n_donor_base).filter(|d| !idx.contains(d)));
+            gt_prior_use = subset_gt_donors(&gt_prior_use, &idx_order);
+            let id_prob_use = reorder_id_donors(&model.id_prob, &idx_order);
+            let mut next = Vireo::default();
+            next.set_rng_seed(random_seed.wrapping_add(n_init as u64 + 1));
+            next.__init__(
+                ad_arr.ncols(),
+                ad_arr.nrows(),
+                n_donor_base,
+                n_gt_usize,
+                learn_gt_bool,
+                true,
+                ase_mode_bool,
+                fix_beta_sum_bool,
+                Some(model.beta_mu.clone()),
+                Some(model.beta_sum.clone()),
+                Some(id_prob_use),
+                Some(gt_prior_use.clone()),
+            )?;
+            next.set_prior(Some(gt_prior_use), None, None, None, None)?;
+            next.fit(ad_arr, dp_arr, 200, 20, None, 0, false, None, 1)?;
+            model = next;
+        }
     }
     let (doublet_prob, id_prob, doublet_llr) = if check_doublet {
         match vireo_doublet::predict_doublet(
@@ -185,6 +361,22 @@ pub fn vireo_wrap(
             theta_shapes[[i + s1.shape()[0], j]] = s2[[i, j]];
         }
     }
+    let (ambient_psi, psi_var, psi_llratio) = if check_ambient {
+        match vireo_doublet::predit_ambient(
+            &model.gt_prob,
+            &model.beta_mu,
+            &model.id_prob,
+            ad_arr,
+            dp_arr,
+            nproc,
+            None,
+        ) {
+            Some((psi, var, llr)) => (Some(psi), Some(var), Some(llr)),
+            None => return None,
+        }
+    } else {
+        (None, None, None)
+    };
     Some(VireoWrapResult {
         id_prob,
         gt_prob: model.gt_prob,
@@ -193,9 +385,9 @@ pub fn vireo_wrap(
         theta_shapes,
         theta_mean: model.beta_mu,
         theta_sum: model.beta_sum,
-        ambient_psi: None,
-        psi_var: None,
-        psi_llratio: None,
+        ambient_psi,
+        psi_var,
+        psi_llratio,
         lb_list: elbo_all,
         lb_doublet: *model.elbo_.last().unwrap_or(&0.0),
     })

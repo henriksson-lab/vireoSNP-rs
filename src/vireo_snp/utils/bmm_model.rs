@@ -21,6 +21,7 @@ pub struct BinomMixtureVB {
     pub n_cell: usize,
     pub n_donor: usize,
     pub n_var: usize,
+    pub rng_seed: u64,
     pub theta_s1_prior: Array2<f64>,
     pub theta_s2_prior: Array2<f64>,
 }
@@ -66,7 +67,7 @@ impl BinomMixtureVB {
         };
         self.id_prob = match id_prob_init {
             None => {
-                let mut rng = StdRng::seed_from_u64(0);
+                let mut rng = StdRng::seed_from_u64(self.rng_seed);
                 let mut id = Array2::<f64>::zeros((n_cell, n_donor));
                 for v in id.iter_mut() {
                     *v = rng.gen::<f64>();
@@ -213,7 +214,7 @@ impl BinomMixtureVB {
         n_init: usize,
         max_iter: usize,
         max_iter_pre: Option<usize>,
-        _random_seed: u64,
+        random_seed: u64,
     ) -> Option<()> {
         let max_iter_pre_use = max_iter_pre.unwrap_or(100);
         let binom_coeff = vireo_base::get_binom_coeff(ad_arr, dp_arr, 700.0)
@@ -222,6 +223,7 @@ impl BinomMixtureVB {
         let mut elbo_inits = Vec::new();
         let mut best: Option<BestBinomMixture> = None;
         for i in 0..n_init {
+            self.rng_seed = random_seed.wrapping_add(i as u64);
             let beta_mu_init = self.beta_mu_init.clone();
             let beta_sum_init = self.beta_sum_init.clone();
             let id_prob_init = self.id_prob_init.clone();

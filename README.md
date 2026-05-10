@@ -74,7 +74,43 @@ fn main() -> Result<()> {
 
 The Rust library name is `vireosnp_rs`, matching the package name `vireosnp-rs`.
 
-Lower-level translated functions remain available under `vireosnp_rs::vireo_snp::utils` for audit-oriented or custom workflows.
+Lower-level translated functions remain available under `vireosnp_rs::vireo_snp::utils` for audit-oriented or custom workflows. The main one is `vireo_wrap`, which is the translated fitting engine called by the high-level API and the `vireoSNP` command.
+
+```rust
+use ndarray::Array2;
+use vireosnp_rs::{vireo_snp::utils::vireo_wrap, Result};
+
+fn main() -> Result<()> {
+    // AD and DP are variant-by-cell matrices.
+    let ad = Array2::<f64>::zeros((100, 20));
+    let dp = Array2::<f64>::zeros((100, 20));
+
+    let result = vireo_wrap::vireo_wrap(
+        &ad,
+        &dp,
+        None,             // optional GT prior: variants x donors x genotypes
+        Some(4),          // number of donors when no GT prior is supplied
+        true,             // learn GT
+        20,               // max EM iterations
+        Some(1),          // random seed
+        true,             // check doublets
+        20,               // doublet iterations
+        3,                // genotype states
+        0,                // extra donors
+        Some("distance"), // initial donor selection
+        false,            // no GT mode
+        4,                // nproc; requires the optional parallel feature for Rayon use
+        false,            // output donor-specific AD/DP
+        false,            // check ambient RNA
+        3,                // number of initial models
+    )?;
+
+    println!("assignment matrix: {:?}", result.id_prob.dim());
+    Ok(())
+}
+```
+
+Use `vireo_wrap` directly when AD/DP matrices are already in memory. Use `fit(...)` or the CLI when reading cellSNP or vartrix output and writing the usual Vireo output files.
 
 The same high-level API is available as a runnable example:
 
@@ -108,6 +144,8 @@ synth_pool \
   --noregionFile \
   --outDir pooled
 ```
+
+`vireo_wrap` is not a separate command-line program. It is the library routine used by `vireoSNP` after input parsing. The current package mirrors the upstream entry points as separate binaries (`vireoSNP`, `GTbarcode`, and `synth_pool`); a single Rust binary with subcommands would also make sense, but would be a separate CLI design from the upstream-compatible names. The translated `synth_pool` command keeps the barcode-pooling workflow surface; upstream BAM rewriting/output is intentionally out of scope for this Rust translation.
 
 ## Benchmarks
 

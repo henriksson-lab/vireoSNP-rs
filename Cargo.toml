@@ -24,8 +24,11 @@ include = [
 ]
 
 [features]
-default = []
+default = ["plotting", "plotting-pdf", "parallel"]
 cli = []
+parallel = ["dep:rayon"]
+plotting = ["dep:plotters"]
+plotting-pdf = ["plotting", "dep:cairo-rs", "dep:plotters-cairo"]
 
 [lib]
 name = "vireosnp_rs"
@@ -54,3 +57,7 @@ flate2 = "1"
 hdf5 = "0.8"
 memchr = "2"
 memmap2 = "0.9"
+cairo-rs = { version = "0.21", default-features = false, features = ["pdf"], optional = true }
+plotters = { version = "0.3.7", default-features = false, features = ["bitmap_backend", "bitmap_encoder", "svg_backend", "ttf"], optional = true }
+plotters-cairo = { version = "0.8", optional = true }
+rayon = { version = "1.10", optional = true }

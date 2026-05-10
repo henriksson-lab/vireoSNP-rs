@@ -3,6 +3,8 @@ use crate::vireo_snp::utils::vireo_base;
 use ndarray::{Array1, Array2, Array3};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
+#[cfg(feature = "parallel")]
+use rayon::prelude::*;
 
 pub fn predict_doublet(
     gt_prob: &Array3<f64>,
@@ -283,7 +285,7 @@ pub fn predit_ambient(
     id_prob: &Array2<f64>,
     ad: &Array2<f64>,
     dp: &Array2<f64>,
-    _nproc: usize,
+    nproc: usize,
     min_elbo_gain: Option<f64>,
 ) -> Option<(Array2<f64>, Array2<f64>, Vec<f64>)> {
     if ad.raw_dim() != dp.raw_dim() {
@@ -312,26 +314,54 @@ pub fn predit_ambient(
         ad_use.row_mut(new_i).assign(&ad.row(old_i));
         dp_use.row_mut(new_i).assign(&dp.row(old_i));
     }
+    #[cfg(feature = "parallel")]
+    let per_cell: Vec<(Array1<f64>, Vec<f64>, f64)> = if nproc > 1 && ad_use.ncols() > 1 {
+        (0..ad_use.ncols())
+            .into_par_iter()
+            .map(|cell| {
+                let ad_col = ad_use.column(cell).to_owned();
+                let dp_col = dp_use.column(cell).to_owned();
+                _fit_EM_ambient(
+                    &ad_col, &dp_col, &theta_use, None, None, None, None, true, false,
+                )
+            })
+            .collect::<Option<Vec<_>>>()?
+    } else {
+        (0..ad_use.ncols())
+            .map(|cell| {
+                let ad_col = ad_use.column(cell).to_owned();
+                let dp_col = dp_use.column(cell).to_owned();
+                _fit_EM_ambient(
+                    &ad_col, &dp_col, &theta_use, None, None, None, None, true, false,
+                )
+            })
+            .collect::<Option<Vec<_>>>()?
+    };
+    #[cfg(not(feature = "parallel"))]
+    let per_cell: Vec<(Array1<f64>, Vec<f64>, f64)> = (0..ad_use.ncols())
+        .map(|cell| {
+            let ad_col = ad_use.column(cell).to_owned();
+            let dp_col = dp_use.column(cell).to_owned();
+            _fit_EM_ambient(
+                &ad_col, &dp_col, &theta_use, None, None, None, None, true, false,
+            )
+        })
+        .collect::<Option<Vec<_>>>()?;
+
     let mut psi_mat = Array2::<f64>::zeros((ad_use.ncols(), theta_use.ncols()));
     let mut psi_var = Array2::<f64>::zeros((ad_use.ncols(), theta_use.ncols()));
     let mut psi_loglik = Vec::with_capacity(ad_use.ncols());
-    for cell in 0..ad_use.ncols() {
-        let ad_col = ad_use.column(cell).to_owned();
-        let dp_col = dp_use.column(cell).to_owned();
-        match _fit_EM_ambient(
-            &ad_col, &dp_col, &theta_use, None, None, None, None, true, false,
-        ) {
-            Some((psi, var, llr)) => {
-                for (d, v) in psi.iter().enumerate() {
-                    psi_mat[[cell, d]] = *v;
-                }
-                for (d, v) in var.iter().enumerate() {
-                    psi_var[[cell, d]] = *v;
-                }
-                psi_loglik.push(llr);
-            }
-            None => return None,
+    for (cell, (psi, var, llr)) in per_cell.into_iter().enumerate() {
+        if psi.len() != theta_use.ncols() || var.len() != theta_use.ncols() {
+            return None;
         }
+        for (d, v) in psi.iter().enumerate() {
+            psi_mat[[cell, d]] = *v;
+        }
+        for (d, v) in var.iter().enumerate() {
+            psi_var[[cell, d]] = *v;
+        }
+        psi_loglik.push(llr);
     }
     Some((psi_mat, psi_var, psi_loglik))
 }

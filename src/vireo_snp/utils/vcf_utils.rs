@@ -1,3 +1,4 @@
+use crate::vireo_snp::utils::vireo_base;
 use flate2::read::MultiGzDecoder;
 use ndarray::{Array2, Array3};
 use std::collections::{BTreeMap, HashMap};
@@ -1234,22 +1235,21 @@ pub fn match_VCF_samples(
             };
         }
     }
-    let mut assigned = vec![false; donor1.len()];
-    let mut idx0 = Vec::new();
-    let mut idx1 = Vec::new();
-    for d0 in 0..donor0.len() {
-        let mut best = None;
-        for d1 in 0..donor1.len() {
-            if !assigned[d1] && best.is_none_or(|(_, v)| diff[[d0, d1]] < v) {
-                best = Some((d1, diff[[d0, d1]]));
+    let n_gt = gpb0.shape()[2].min(gpb1.shape()[2]);
+    let mut flat0 = ndarray::Array2::<f64>::zeros((pairs.len() * n_gt, donor0.len()));
+    let mut flat1 = ndarray::Array2::<f64>::zeros((pairs.len() * n_gt, donor1.len()));
+    for (pair_idx, &(i1, i0)) in pairs.iter().enumerate() {
+        for g in 0..n_gt {
+            let row = pair_idx * n_gt + g;
+            for d0 in 0..donor0.len() {
+                flat0[[row, d0]] = gpb0[[i0, d0, g]];
+            }
+            for d1 in 0..donor1.len() {
+                flat1[[row, d1]] = gpb1[[i1, d1, g]];
             }
         }
-        if let Some((d1, _)) = best {
-            assigned[d1] = true;
-            idx0.push(d0);
-            idx1.push(d1);
-        }
     }
+    let (idx0, idx1, _) = vireo_base::optimal_match(&flat0, &flat1, Some(1), false)?;
     let mut matched = ndarray::Array2::<f64>::zeros((idx0.len(), idx1.len()));
     for (i, &d0) in idx0.iter().enumerate() {
         for (j, &d1) in idx1.iter().enumerate() {
