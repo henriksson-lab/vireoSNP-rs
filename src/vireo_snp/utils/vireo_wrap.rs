@@ -1,9 +1,23 @@
 use crate::vireo_snp::utils::vireo_base;
 use crate::vireo_snp::utils::vireo_doublet;
 use crate::vireo_snp::utils::vireo_model::Vireo;
-use crate::PyValue;
-use ndarray::{Array2, Ix3};
-use std::collections::BTreeMap;
+use ndarray::{Array2, Array3};
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct VireoWrapResult {
+    pub id_prob: Array2<f64>,
+    pub gt_prob: ndarray::Array3<f64>,
+    pub doublet_llr: Vec<f64>,
+    pub doublet_prob: Array2<f64>,
+    pub theta_shapes: Array2<f64>,
+    pub theta_mean: Array2<f64>,
+    pub theta_sum: Array2<f64>,
+    pub ambient_psi: Option<Array2<f64>>,
+    pub psi_var: Option<Array2<f64>>,
+    pub psi_llratio: Option<Vec<f64>>,
+    pub lb_list: Vec<f64>,
+    pub lb_doublet: f64,
+}
 
 pub fn _model_fit(
     mut model: Vireo,
@@ -34,7 +48,7 @@ pub fn vireo_wrap(
     ase_mode_bool: bool,
     fix_beta_sum_bool: bool,
     n_gt_usize: usize,
-) -> Option<BTreeMap<String, PyValue>> {
+) -> Option<VireoWrapResult> {
     let mut n_donor_use_base = n_donor;
     if n_donor_use_base.is_none() {
         n_donor_use_base = gt_prior_arr.map(|x| x.shape()[1]);
@@ -49,25 +63,19 @@ pub fn vireo_wrap(
         n_init = 1;
     }
     let n_donor_use = n_donor_base + n_extra_donor;
-    let gt_prior_use = if let Some(gt) = gt_prior_arr {
+    let gt_prior_use: Option<Array3<f64>> = if let Some(gt) = gt_prior_arr {
         if n_donor_use <= gt.shape()[1] {
-            PyValue::ArrayF64(gt.clone().into_dyn())
+            Some(gt.clone())
         } else {
-            PyValue::None
+            None
         }
     } else {
-        PyValue::None
+        None
     };
     let mut models = Vec::new();
     for _ in 0..n_init {
         let mut model = Vireo::default();
-        let gt_init = match &gt_prior_use {
-            PyValue::ArrayF64(x) => match x.clone().into_dimensionality::<Ix3>() {
-                Ok(x) => Some(x),
-                Err(_) => return None,
-            },
-            _ => None,
-        };
+        let gt_init = gt_prior_use.clone();
         if model
             .__init__(
                 ad_arr.ncols(),
@@ -142,13 +150,7 @@ pub fn vireo_wrap(
         let beta_mu = Some(model.beta_mu.clone());
         let beta_sum = Some(model.beta_sum.clone());
         let id_prob = Some(id_prob);
-        let gt_init = match &gt_prior_use {
-            PyValue::ArrayF64(x) => match x.clone().into_dimensionality::<Ix3>() {
-                Ok(x) => Some(x),
-                Err(_) => return None,
-            },
-            _ => None,
-        };
+        let gt_init = gt_prior_use.clone();
         if next
             .__init__(
                 ad_arr.ncols(),
@@ -190,41 +192,26 @@ pub fn vireo_wrap(
         model = next;
     }
     let (doublet_prob, id_prob, doublet_llr) = if check_doublet {
-        let mut model_map = BTreeMap::new();
-        model_map.insert(
-            "GT_prob".to_string(),
-            PyValue::ArrayF64(model.gt_prob.clone().into_dyn()),
-        );
-        model_map.insert(
-            "ID_prob".to_string(),
-            PyValue::ArrayF64(model.id_prob.clone().into_dyn()),
-        );
-        model_map.insert(
-            "ID_prior".to_string(),
-            PyValue::ArrayF64(model.id_prior.clone().into_dyn()),
-        );
-        model_map.insert(
-            "beta_mu".to_string(),
-            PyValue::ArrayF64(model.beta_mu.clone().into_dyn()),
-        );
-        model_map.insert(
-            "beta_sum".to_string(),
-            PyValue::ArrayF64(model.beta_sum.clone().into_dyn()),
-        );
-        match vireo_doublet::predict_doublet(&model_map, &ad_arr, &dp_arr, true, true, None) {
-            Some((doublet, singlet, llr)) => (
-                PyValue::ArrayF64(doublet.into_dyn()),
-                PyValue::ArrayF64(singlet.into_dyn()),
-                PyValue::F64Vec(llr),
-            ),
+        match vireo_doublet::predict_doublet(
+            &model.gt_prob,
+            &model.beta_mu,
+            &model.beta_sum,
+            Some(&model.id_prior),
+            ad_arr,
+            dp_arr,
+            true,
+            true,
+            None,
+        ) {
+            Some((doublet, singlet, llr)) => (doublet, singlet, llr),
             _ => return None,
         }
     } else {
         let pairs = n_donor_base * (n_donor_base - 1) / 2;
         (
-            PyValue::ArrayF64(Array2::<f64>::zeros((ad_arr.ncols(), pairs)).into_dyn()),
-            PyValue::ArrayF64(model.id_prob.clone().into_dyn()),
-            PyValue::F64Vec(vec![0.0; ad_arr.ncols()]),
+            Array2::<f64>::zeros((ad_arr.ncols(), pairs)),
+            model.id_prob.clone(),
+            vec![0.0; ad_arr.ncols()],
         )
     };
     let s1 = &model.beta_mu * &model.beta_sum;
@@ -236,33 +223,18 @@ pub fn vireo_wrap(
             theta_shapes[[i + s1.shape()[0], j]] = s2[[i, j]];
         }
     }
-    let mut rv = BTreeMap::new();
-    rv.insert("ID_prob".to_string(), id_prob);
-    rv.insert(
-        "GT_prob".to_string(),
-        PyValue::ArrayF64(model.gt_prob.clone().into_dyn()),
-    );
-    rv.insert("doublet_LLR".to_string(), doublet_llr);
-    rv.insert("doublet_prob".to_string(), doublet_prob);
-    rv.insert(
-        "theta_shapes".to_string(),
-        PyValue::ArrayF64(theta_shapes.into_dyn()),
-    );
-    rv.insert(
-        "theta_mean".to_string(),
-        PyValue::ArrayF64(model.beta_mu.clone().into_dyn()),
-    );
-    rv.insert(
-        "theta_sum".to_string(),
-        PyValue::ArrayF64(model.beta_sum.clone().into_dyn()),
-    );
-    rv.insert("ambient_Psi".to_string(), PyValue::None);
-    rv.insert("Psi_var".to_string(), PyValue::None);
-    rv.insert("Psi_LLRatio".to_string(), PyValue::None);
-    rv.insert("LB_list".to_string(), PyValue::F64Vec(elbo_all));
-    rv.insert(
-        "LB_doublet".to_string(),
-        PyValue::F64(*model.elbo_.last().unwrap_or(&0.0)),
-    );
-    Some(rv)
+    Some(VireoWrapResult {
+        id_prob,
+        gt_prob: model.gt_prob,
+        doublet_llr,
+        doublet_prob,
+        theta_shapes,
+        theta_mean: model.beta_mu,
+        theta_sum: model.beta_sum,
+        ambient_psi: None,
+        psi_var: None,
+        psi_llratio: None,
+        lb_list: elbo_all,
+        lb_doublet: *model.elbo_.last().unwrap_or(&0.0),
+    })
 }

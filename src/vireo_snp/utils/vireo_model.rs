@@ -1,5 +1,5 @@
 use crate::vireo_snp::utils::vireo_base;
-use ndarray::{Array2, Array3, Axis, Ix2, Ix3};
+use ndarray::{Array2, Array3, Axis};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use statrs::function::gamma::digamma;
@@ -93,19 +93,13 @@ impl Vireo {
                 for v in id.iter_mut() {
                     *v = rng.gen::<f64>();
                 }
-                match vireo_base::normalize(&id.into_dyn(), Some(1)) {
-                    Some(x) => match x.into_dimensionality::<Ix2>() {
-                        Ok(x) => x,
-                        Err(_) => return None,
-                    },
+                match vireo_base::normalize(&id, Some(1)) {
+                    Some(x) => x,
                     None => return None,
                 }
             }
-            Some(x) => match vireo_base::normalize(&x.into_dyn(), Some(1)) {
-                Some(x) => match x.into_dimensionality::<Ix2>() {
-                    Ok(x) => x,
-                    Err(_) => return None,
-                },
+            Some(x) => match vireo_base::normalize(&x, Some(1)) {
+                Some(x) => x,
                 None => return None,
             },
         };
@@ -115,19 +109,13 @@ impl Vireo {
                 for v in gt.iter_mut() {
                     *v = rng.gen::<f64>();
                 }
-                match vireo_base::normalize(&gt.into_dyn(), Some(2)) {
-                    Some(x) => match x.into_dimensionality::<Ix3>() {
-                        Ok(x) => x,
-                        Err(_) => return None,
-                    },
+                match vireo_base::normalize(&gt, Some(2)) {
+                    Some(x) => x,
                     None => return None,
                 }
             }
-            Some(x) => match vireo_base::normalize(&x.into_dyn(), None) {
-                Some(x) => match x.into_dimensionality::<Ix3>() {
-                    Ok(x) => x,
-                    Err(_) => return None,
-                },
+            Some(x) => match vireo_base::normalize(&x, None) {
+                Some(x) => x,
                 None => return None,
             },
         };
@@ -163,11 +151,8 @@ impl Vireo {
         self.theta_s1_prior = &beta_mu_prior * &beta_sum_prior;
         self.theta_s2_prior = (&beta_mu_prior * -1.0 + 1.0) * &beta_sum_prior;
         self.id_prior = match id_prior {
-            Some(x) => match vireo_base::normalize(&x.into_dyn(), Some(1)) {
-                Some(x) => match x.into_dimensionality::<Ix2>() {
-                    Ok(x) => x,
-                    Err(_) => return None,
-                },
+            Some(x) => match vireo_base::normalize(&x, Some(1)) {
+                Some(x) => x,
                 None => return None,
             },
             None => Array2::from_elem(
@@ -179,11 +164,8 @@ impl Vireo {
         self.gt_prior = match gt_prior {
             Some(mut x) => {
                 x.mapv_inplace(|v| v.max(min_gp).min(1.0 - min_gp));
-                match vireo_base::normalize(&x.into_dyn(), Some(2)) {
-                    Some(x) => match x.into_dimensionality::<Ix3>() {
-                        Ok(x) => x,
-                        Err(_) => return None,
-                    },
+                match vireo_base::normalize(&x, Some(2)) {
+                    Some(x) => x,
                     None => return None,
                 }
             }
@@ -304,16 +286,13 @@ impl Vireo {
             log_lik =
                 log_lik + ad.t().dot(&weighted1) + bd.t().dot(&weighted2) - dp.t().dot(&weighteds);
         }
-        let log_lik_prior = &log_lik.clone().into_dyn() + &self.id_prior.mapv(f64::ln).into_dyn();
+        let log_lik_prior = &log_lik + &self.id_prior.mapv(f64::ln);
         let amplified = match vireo_base::loglik_amplify(&log_lik_prior, None) {
             Some(x) => x,
             None => return None,
         };
         self.id_prob = match vireo_base::normalize(&amplified.mapv(f64::exp), None) {
-            Some(x) => match x.into_dimensionality::<Ix2>() {
-                Ok(x) => x,
-                Err(_) => return None,
-            },
+            Some(x) => x,
             None => return None,
         };
         Some(log_lik)
@@ -351,16 +330,13 @@ impl Vireo {
                 }
             }
         }
-        let log_lik_prior = &log_lik.into_dyn() + &gt_prior.into_dyn().mapv(f64::ln);
+        let log_lik_prior = &log_lik + &gt_prior.mapv(f64::ln);
         let amplified = match vireo_base::loglik_amplify(&log_lik_prior, None) {
             Some(x) => x,
             None => return None,
         };
         self.gt_prob = match vireo_base::normalize(&amplified.mapv(f64::exp), None) {
-            Some(x) => match x.into_dimensionality::<Ix3>() {
-                Ok(x) => x,
-                Err(_) => return None,
-            },
+            Some(x) => x,
             None => return None,
         };
         Some(())
@@ -468,10 +444,9 @@ impl Vireo {
             Some(v) => v,
             None => return None,
         };
-        let binom_coeff =
-            vireo_base::get_binom_coeff(&ad.clone().into_dyn(), &dp.clone().into_dyn(), 700.0)
-                .iter()
-                .sum::<f64>();
+        let binom_coeff = vireo_base::get_binom_coeff(&ad, &dp, 700.0)
+            .iter()
+            .sum::<f64>();
         for v in &mut elbo {
             *v += binom_coeff;
         }

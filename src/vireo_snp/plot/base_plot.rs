@@ -11,8 +11,52 @@ pub fn heat_matrix(
     row_sort: bool,
     aspect: &str,
     interpolation: &str,
-    kwargs: Option<&std::collections::BTreeMap<String, String>>,
 ) -> Option<()> {
+    if x.is_empty() {
+        return None;
+    }
+    if let Some(yticks) = yticks {
+        if yticks.len() != x.nrows() {
+            return None;
+        }
+    }
+    if let Some(xticks) = xticks {
+        if xticks.len() != x.ncols() {
+            return None;
+        }
+    }
+    let mut mat = x.clone();
+    if row_sort {
+        let mut row_idx: Vec<usize> = (0..mat.nrows()).collect();
+        row_idx.sort_by(|&a, &b| {
+            let va: f64 = mat
+                .row(a)
+                .iter()
+                .enumerate()
+                .map(|(j, v)| *v * 2f64.powi(j as i32))
+                .sum();
+            let vb: f64 = mat
+                .row(b)
+                .iter()
+                .enumerate()
+                .map(|(j, v)| *v * 2f64.powi(j as i32))
+                .sum();
+            va.total_cmp(&vb)
+        });
+        let old = mat.clone();
+        for (new_i, old_i) in row_idx.into_iter().enumerate() {
+            mat.row_mut(new_i).assign(&old.row(old_i));
+        }
+    }
+    let _ = (
+        mat,
+        rotation,
+        cmap,
+        alpha,
+        display_value,
+        aspect,
+        interpolation,
+    );
     Some(())
 }
 
@@ -32,7 +76,6 @@ pub fn minicode_plot(
     sample_ids: Option<&[String]>,
     cmap: &str,
     interpolation: &str,
-    kwargs: Option<&std::collections::BTreeMap<String, String>>,
 ) -> Option<Array2<f64>> {
     if barcode_set.is_empty() {
         return None;
@@ -61,7 +104,6 @@ pub fn anno_heat(
     yticklabels: bool,
     row_cluster: bool,
     col_cluster: bool,
-    kwargs: Option<&std::collections::BTreeMap<String, String>>,
 ) -> Option<()> {
     Some(())
 }

@@ -1,15 +1,51 @@
-use crate::PyValue;
 use flate2::read::MultiGzDecoder;
 use ndarray::{Array2, Array3};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fs::File;
 use std::io::{BufRead, BufReader, Read, Write};
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct VcfGenoInfo {
+    pub string_vecs: BTreeMap<String, Vec<String>>,
+    pub string_matrices: BTreeMap<String, Vec<Vec<String>>>,
+    pub i64_vecs: BTreeMap<String, Vec<i64>>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct VcfData {
+    pub variants: Vec<String>,
+    pub fixed_info: BTreeMap<String, Vec<String>>,
+    pub contigs: Vec<String>,
+    pub comments: Vec<String>,
+    pub samples: Vec<String>,
+    pub geno_info: Option<VcfGenoInfo>,
+    pub n_snp_tagged: Vec<i64>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct VcfSampleMatchResult {
+    pub matched_gpb_diff: Array2<f64>,
+    pub matched_donors1: Vec<String>,
+    pub matched_donors2: Vec<String>,
+    pub full_gpb_diff: Array2<f64>,
+    pub full_donors1: Vec<String>,
+    pub full_donors2: Vec<String>,
+    pub matched_n_var: usize,
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct GeneData {
+    pub chrom: Vec<String>,
+    pub start: Vec<i64>,
+    pub stop: Vec<i64>,
+    pub gene: Vec<String>,
+}
 
 pub fn parse_sample_info(
     sample_dat: &[Vec<String>],
     sparse: bool,
     format_list: Option<&[String]>,
-) -> Option<(BTreeMap<String, PyValue>, Vec<i64>)> {
+) -> Option<(VcfGenoInfo, Vec<i64>)> {
     if sample_dat.is_empty() {
         return None;
     }
@@ -20,10 +56,10 @@ pub fn parse_sample_info(
     let format_list = format_list
         .map(|x| x.to_vec())
         .unwrap_or_else(|| format_all[0].clone());
-    let mut rv = BTreeMap::new();
+    let mut rv = VcfGenoInfo::default();
     let mut n_snp_tagged = vec![0i64; format_list.len()];
     for key in &format_list {
-        rv.insert(key.clone(), PyValue::StringVec(Vec::new()));
+        rv.string_vecs.insert(key.clone(), Vec::new());
     }
     if sparse {
         if format_all.iter().any(|x| x != &format_list) {
@@ -40,7 +76,7 @@ pub fn parse_sample_info(
                 }
                 let line_key: Vec<&str> = cell.split(':').collect();
                 for (k, key) in format_list.iter().enumerate() {
-                    if let Some(PyValue::StringVec(values)) = rv.get_mut(key) {
+                    if let Some(values) = rv.string_vecs.get_mut(key) {
                         values.push(line_key[k].to_string());
                     }
                     n_snp_tagged[k] += 1;
@@ -50,16 +86,14 @@ pub fn parse_sample_info(
             }
             indptr.push(cnt);
         }
-        rv.insert("indices".to_string(), PyValue::I64Vec(indices));
-        rv.insert("indptr".to_string(), PyValue::I64Vec(indptr));
-        rv.insert(
+        rv.i64_vecs.insert("indices".to_string(), indices);
+        rv.i64_vecs.insert("indptr".to_string(), indptr);
+        rv.i64_vecs.insert(
             "shape".to_string(),
-            PyValue::I64Vec(vec![
-                (sample_dat[0].len() - 1) as i64,
-                sample_dat.len() as i64,
-            ]),
+            vec![(sample_dat[0].len() - 1) as i64, sample_dat.len() as i64],
         );
     } else {
+        rv.string_vecs.clear();
         for (j, line) in sample_dat.iter().enumerate() {
             let line_split: Vec<Vec<&str>> = line
                 .iter()
@@ -73,10 +107,10 @@ pub fn parse_sample_info(
                 } else {
                     vec![".".to_string(); line_split.len()]
                 };
-                if let Some(PyValue::StringMatrix(rows)) = rv.get_mut(key) {
+                if let Some(rows) = rv.string_matrices.get_mut(key) {
                     rows.push(values);
                 } else {
-                    rv.insert(key.clone(), PyValue::StringMatrix(vec![values]));
+                    rv.string_matrices.insert(key.clone(), vec![values]);
                 }
             }
         }
@@ -90,23 +124,552 @@ pub fn load_VCF(
     load_sample: bool,
     sparse: bool,
     format_list: Option<&[String]>,
-) -> Option<BTreeMap<String, PyValue>> {
+) -> Option<VcfData> {
     let file = match File::open(&path) {
         Ok(file) => file,
         Err(_) => return None,
     };
-    let reader: Box<dyn Read> = if path.ends_with(".gz") || path.ends_with(".bgz") {
+    let mut reader: Box<dyn Read> = if path.ends_with(".gz") || path.ends_with(".bgz") {
         Box::new(MultiGzDecoder::new(file))
     } else {
         Box::new(file)
     };
-    let mut fixed_info: BTreeMap<String, PyValue> = BTreeMap::new();
+    let mut fixed_info: BTreeMap<String, Vec<String>> = BTreeMap::new();
     let mut contig_lines = Vec::new();
     let mut comment_lines = Vec::new();
     let mut var_ids = Vec::new();
     let mut obs_ids = Vec::new();
     let mut obs_dat = Vec::new();
     let mut key_ids = Vec::<String>::new();
+    if load_sample && sparse && !(path.ends_with(".gz") || path.ends_with(".bgz")) {
+        let mmap_file = match File::open(&path) {
+            Ok(file) => file,
+            Err(_) => return None,
+        };
+        let mmap = match unsafe { memmap2::MmapOptions::new().map(&mmap_file) } {
+            Ok(mmap) => mmap,
+            Err(_) => return None,
+        };
+        let bytes = mmap.as_ref();
+        let reserve_rows = bytes.len() / 250;
+        let mut data_start = 0usize;
+        let mut line_start = 0usize;
+        while line_start < bytes.len() {
+            let mut line_end = match memchr::memchr(b'\n', &bytes[line_start..]) {
+                Some(offset) => line_start + offset,
+                None => bytes.len(),
+            };
+            let next_line = if line_end < bytes.len() {
+                line_end + 1
+            } else {
+                line_end
+            };
+            if line_end > line_start && bytes[line_end - 1] == b'\r' {
+                line_end -= 1;
+            }
+            if line_start == line_end {
+                line_start = next_line;
+                continue;
+            }
+            let line = &bytes[line_start..line_end];
+            if line[0] != b'#' {
+                data_start = line_start;
+                break;
+            }
+            if line.starts_with(b"##contig=") {
+                contig_lines.push(unsafe { std::str::from_utf8_unchecked(line) }.to_string());
+            }
+            if line.starts_with(b"#CHROM") {
+                key_ids.clear();
+                let mut p = 0usize;
+                let mut field_i = 0usize;
+                while p <= line.len() {
+                    let start = p;
+                    while p < line.len() && line[p] != b'\t' {
+                        p += 1;
+                    }
+                    let mut field = &line[start..p];
+                    if field_i < 8 {
+                        if field.first() == Some(&b'#') {
+                            field = &field[1..];
+                        }
+                        key_ids.push(unsafe { std::str::from_utf8_unchecked(field) }.to_string());
+                    } else if field_i >= 9 {
+                        obs_ids.push(unsafe { std::str::from_utf8_unchecked(field) }.to_string());
+                    }
+                    field_i += 1;
+                    if p == line.len() {
+                        break;
+                    }
+                    p += 1;
+                }
+            } else {
+                comment_lines.push(unsafe { std::str::from_utf8_unchecked(line) }.to_string());
+            }
+            line_start = next_line;
+        }
+        if data_start == 0 || key_ids.len() < 8 {
+            return None;
+        }
+        let mut format_keys = format_list.map(|x| x.to_vec()).unwrap_or_default();
+        if format_keys.is_empty() {
+            let mut first_end = match memchr::memchr(b'\n', &bytes[data_start..]) {
+                Some(offset) => data_start + offset,
+                None => bytes.len(),
+            };
+            if first_end > data_start && bytes[first_end - 1] == b'\r' {
+                first_end -= 1;
+            }
+            let line = &bytes[data_start..first_end];
+            let mut p = 0usize;
+            for _ in 0..8 {
+                while p < line.len() && line[p] != b'\t' {
+                    p += 1;
+                }
+                if p < line.len() {
+                    p += 1;
+                }
+            }
+            let fmt_start = p;
+            while p < line.len() && line[p] != b'\t' {
+                p += 1;
+            }
+            let fmt_b = &line[fmt_start..p];
+            let mut q = 0usize;
+            while q <= fmt_b.len() {
+                let start = q;
+                while q < fmt_b.len() && fmt_b[q] != b':' {
+                    q += 1;
+                }
+                format_keys
+                    .push(unsafe { std::str::from_utf8_unchecked(&fmt_b[start..q]) }.to_string());
+                if q == fmt_b.len() {
+                    break;
+                }
+                q += 1;
+            }
+        }
+        let expected_format = format_keys.join(":").into_bytes();
+        let n_threads = std::thread::available_parallelism()
+            .map(|x| x.get())
+            .unwrap_or(1)
+            .min(16)
+            .max(1);
+        let body_len = bytes.len().saturating_sub(data_start);
+        let mut starts = Vec::with_capacity(n_threads + 1);
+        starts.push(data_start);
+        for t in 1..n_threads {
+            let mut start = data_start + body_len * t / n_threads;
+            if start < bytes.len() && bytes[start - 1] != b'\n' {
+                match memchr::memchr(b'\n', &bytes[start..]) {
+                    Some(offset) => start += offset + 1,
+                    None => start = bytes.len(),
+                }
+            }
+            starts.push(start);
+        }
+        starts.push(bytes.len());
+        let bytes_ref = bytes;
+        let parsed = std::thread::scope(|scope| {
+            let mut handles = Vec::with_capacity(n_threads);
+            for t in 0..n_threads {
+                let start = starts[t];
+                let end = starts[t + 1];
+                let format_keys = &format_keys;
+                let expected_format = expected_format.as_slice();
+                handles.push(scope.spawn(move || {
+                    let reserve_rows = (end - start) / 350;
+                    let reserve_nnz = reserve_rows.saturating_mul(8);
+                    let mut local_var_ids = Vec::<String>::with_capacity(reserve_rows);
+                    let mut local_fixed_cols: Vec<Vec<String>> =
+                        (0..8).map(|_| Vec::with_capacity(reserve_rows)).collect();
+                    let mut local_geno = (0..format_keys.len())
+                        .map(|_| Vec::<String>::with_capacity(reserve_nnz))
+                        .collect::<Vec<_>>();
+                    let mut local_n_tagged = vec![0i64; format_keys.len()];
+                    let mut local_indices = Vec::<i64>::with_capacity(reserve_nnz);
+                    let mut local_indptr = Vec::<i64>::with_capacity(reserve_rows + 1);
+                    local_indptr.push(0);
+                    let mut local_cnt = 0i64;
+                    let mut line_start = start;
+                    while line_start < end {
+                        let mut line_end = match memchr::memchr(b'\n', &bytes_ref[line_start..end])
+                        {
+                            Some(offset) => line_start + offset,
+                            None => end,
+                        };
+                        let next_line = if line_end < end {
+                            line_end + 1
+                        } else {
+                            line_end
+                        };
+                        if line_end > line_start && bytes_ref[line_end - 1] == b'\r' {
+                            line_end -= 1;
+                        }
+                        if line_start == line_end {
+                            line_start = next_line;
+                            continue;
+                        }
+                        let line = &bytes_ref[line_start..line_end];
+                        let mut fields = [(0usize, 0usize); 9];
+                        let mut p = 0usize;
+                        for field in &mut fields {
+                            let start = p;
+                            while p < line.len() && line[p] != b'\t' {
+                                p += 1;
+                            }
+                            *field = (start, p);
+                            if p < line.len() {
+                                p += 1;
+                            }
+                        }
+                        let chrom_b = &line[fields[0].0..fields[0].1];
+                        let pos_b = &line[fields[1].0..fields[1].1];
+                        let id_b = &line[fields[2].0..fields[2].1];
+                        let ref_b = &line[fields[3].0..fields[3].1];
+                        let alt_b = &line[fields[4].0..fields[4].1];
+                        let qual_b = &line[fields[5].0..fields[5].1];
+                        let filter_b = &line[fields[6].0..fields[6].1];
+                        let info_b = &line[fields[7].0..fields[7].1];
+                        let fmt_b = &line[fields[8].0..fields[8].1];
+                        if biallelic_only && (ref_b.len() > 1 || alt_b.len() > 1) {
+                            line_start = next_line;
+                            continue;
+                        }
+                        if fmt_b != expected_format {
+                            return None;
+                        }
+                        let chrom = unsafe { std::str::from_utf8_unchecked(chrom_b) };
+                        let pos_s = unsafe { std::str::from_utf8_unchecked(pos_b) };
+                        let ref_s = unsafe { std::str::from_utf8_unchecked(ref_b) };
+                        let alt_s = unsafe { std::str::from_utf8_unchecked(alt_b) };
+                        local_fixed_cols[0].push(chrom.to_string());
+                        local_fixed_cols[1].push(pos_s.to_string());
+                        local_fixed_cols[2]
+                            .push(unsafe { std::str::from_utf8_unchecked(id_b) }.to_string());
+                        local_fixed_cols[3].push(ref_s.to_string());
+                        local_fixed_cols[4].push(alt_s.to_string());
+                        local_fixed_cols[5]
+                            .push(unsafe { std::str::from_utf8_unchecked(qual_b) }.to_string());
+                        local_fixed_cols[6]
+                            .push(unsafe { std::str::from_utf8_unchecked(filter_b) }.to_string());
+                        local_fixed_cols[7]
+                            .push(unsafe { std::str::from_utf8_unchecked(info_b) }.to_string());
+                        let mut variant = String::with_capacity(
+                            chrom.len() + pos_s.len() + ref_s.len() + alt_s.len() + 3,
+                        );
+                        variant.push_str(chrom);
+                        variant.push('_');
+                        variant.push_str(pos_s);
+                        variant.push('_');
+                        variant.push_str(ref_s);
+                        variant.push('_');
+                        variant.push_str(alt_s);
+                        local_var_ids.push(variant);
+                        let mut sample_i = 0usize;
+                        while p <= line.len() {
+                            let start = p;
+                            while p < line.len() && line[p] != b'\t' {
+                                p += 1;
+                            }
+                            let cell = &line[start..p];
+                            if cell != b"." && cell.iter().any(|&b| b != b'.' && b != b':') {
+                                let mut q = 0usize;
+                                for (k, values) in local_geno.iter_mut().enumerate() {
+                                    let val_start = q;
+                                    while q < cell.len() && cell[q] != b':' {
+                                        q += 1;
+                                    }
+                                    values.push(
+                                        unsafe {
+                                            std::str::from_utf8_unchecked(&cell[val_start..q])
+                                        }
+                                        .to_string(),
+                                    );
+                                    local_n_tagged[k] += 1;
+                                    if q < cell.len() {
+                                        q += 1;
+                                    }
+                                }
+                                local_indices.push(sample_i as i64);
+                                local_cnt += 1;
+                            }
+                            sample_i += 1;
+                            if p == line.len() {
+                                break;
+                            }
+                            p += 1;
+                        }
+                        local_indptr.push(local_cnt);
+                        line_start = next_line;
+                    }
+                    Some((
+                        local_var_ids,
+                        local_fixed_cols,
+                        local_geno,
+                        local_n_tagged,
+                        local_indices,
+                        local_indptr,
+                        local_cnt,
+                    ))
+                }));
+            }
+            let mut parsed = Vec::with_capacity(n_threads);
+            for handle in handles {
+                parsed.push(handle.join().ok()??);
+            }
+            Some(parsed)
+        })?;
+        let mut fixed_cols: Vec<Vec<String>> =
+            (0..8).map(|_| Vec::with_capacity(reserve_rows)).collect();
+        let mut geno_info = VcfGenoInfo::default();
+        let mut n_snp_tagged = vec![0i64; format_keys.len()];
+        let mut indices = Vec::<i64>::new();
+        let mut indptr = vec![0i64];
+        let mut cnt = 0i64;
+        for key in &format_keys {
+            geno_info.string_vecs.insert(key.clone(), Vec::new());
+        }
+        for (
+            local_var_ids,
+            local_fixed_cols,
+            local_geno,
+            local_n_tagged,
+            local_indices,
+            local_indptr,
+            local_cnt,
+        ) in parsed
+        {
+            var_ids.extend(local_var_ids);
+            for (col, values) in local_fixed_cols.into_iter().enumerate() {
+                fixed_cols[col].extend(values);
+            }
+            for (k, (key, values_in)) in format_keys.iter().zip(local_geno).enumerate() {
+                if let Some(values) = geno_info.string_vecs.get_mut(key) {
+                    values.extend(values_in);
+                }
+                n_snp_tagged[k] += local_n_tagged[k];
+            }
+            indices.extend(local_indices);
+            for value in local_indptr.into_iter().skip(1) {
+                indptr.push(cnt + value);
+            }
+            cnt += local_cnt;
+        }
+        for (key, values) in key_ids.into_iter().zip(fixed_cols.into_iter()) {
+            fixed_info.insert(key, values);
+        }
+        geno_info.i64_vecs.insert("indices".to_string(), indices);
+        geno_info.i64_vecs.insert("indptr".to_string(), indptr);
+        geno_info.i64_vecs.insert(
+            "shape".to_string(),
+            vec![obs_ids.len() as i64, var_ids.len() as i64],
+        );
+        return Some(VcfData {
+            variants: var_ids,
+            fixed_info,
+            contigs: contig_lines,
+            comments: comment_lines,
+            samples: obs_ids,
+            geno_info: Some(geno_info),
+            n_snp_tagged,
+        });
+    }
+    if !load_sample {
+        if !(path.ends_with(".gz") || path.ends_with(".bgz")) {
+            let mmap_file = match File::open(&path) {
+                Ok(file) => file,
+                Err(_) => return None,
+            };
+            let mmap = match unsafe { memmap2::MmapOptions::new().map(&mmap_file) } {
+                Ok(mmap) => mmap,
+                Err(_) => return None,
+            };
+            let bytes = mmap.as_ref();
+            let reserve_rows = bytes.len() / 50;
+            var_ids.reserve(reserve_rows);
+            let mut fixed_cols = Vec::<Vec<String>>::new();
+            let mut line_start = 0usize;
+            while line_start < bytes.len() {
+                let mut line_end = match memchr::memchr(b'\n', &bytes[line_start..]) {
+                    Some(offset) => line_start + offset,
+                    None => bytes.len(),
+                };
+                let next_line = if line_end < bytes.len() {
+                    line_end + 1
+                } else {
+                    line_end
+                };
+                if line_end > line_start && bytes[line_end - 1] == b'\r' {
+                    line_end -= 1;
+                }
+                if line_start == line_end {
+                    line_start = next_line;
+                    continue;
+                }
+                let line = &bytes[line_start..line_end];
+                if line[0] == b'#' {
+                    if line.starts_with(b"##contig=") {
+                        contig_lines
+                            .push(unsafe { std::str::from_utf8_unchecked(line) }.to_string());
+                    }
+                    if line.starts_with(b"#CHROM") {
+                        key_ids.clear();
+                        let mut p = 0usize;
+                        for _ in 0..8 {
+                            let start = p;
+                            while p < line.len() && line[p] != b'\t' {
+                                p += 1;
+                            }
+                            let mut field = &line[start..p];
+                            if field.first() == Some(&b'#') {
+                                field = &field[1..];
+                            }
+                            key_ids
+                                .push(unsafe { std::str::from_utf8_unchecked(field) }.to_string());
+                            if p < line.len() {
+                                p += 1;
+                            }
+                        }
+                        fixed_cols = (0..key_ids.len())
+                            .map(|_| Vec::with_capacity(reserve_rows))
+                            .collect();
+                    } else {
+                        comment_lines
+                            .push(unsafe { std::str::from_utf8_unchecked(line) }.to_string());
+                    }
+                } else {
+                    if key_ids.len() < 8 || fixed_cols.len() < 8 {
+                        return None;
+                    }
+                    let mut fields = [(0usize, 0usize); 8];
+                    let mut p = 0usize;
+                    for field in &mut fields {
+                        let start = p;
+                        while p < line.len() && line[p] != b'\t' {
+                            p += 1;
+                        }
+                        *field = (start, p);
+                        if p < line.len() {
+                            p += 1;
+                        }
+                    }
+                    let chrom_b = &line[fields[0].0..fields[0].1];
+                    let pos_b = &line[fields[1].0..fields[1].1];
+                    let id_b = &line[fields[2].0..fields[2].1];
+                    let ref_b = &line[fields[3].0..fields[3].1];
+                    let alt_b = &line[fields[4].0..fields[4].1];
+                    let qual_b = &line[fields[5].0..fields[5].1];
+                    let filter_b = &line[fields[6].0..fields[6].1];
+                    let info_b = &line[fields[7].0..fields[7].1];
+                    if biallelic_only && (ref_b.len() > 1 || alt_b.len() > 1) {
+                        line_start = next_line;
+                        continue;
+                    }
+                    let chrom = unsafe { std::str::from_utf8_unchecked(chrom_b) };
+                    let pos_s = unsafe { std::str::from_utf8_unchecked(pos_b) };
+                    let ref_s = unsafe { std::str::from_utf8_unchecked(ref_b) };
+                    let alt_s = unsafe { std::str::from_utf8_unchecked(alt_b) };
+                    fixed_cols[0].push(chrom.to_string());
+                    fixed_cols[1].push(pos_s.to_string());
+                    fixed_cols[2].push(unsafe { std::str::from_utf8_unchecked(id_b) }.to_string());
+                    fixed_cols[3].push(ref_s.to_string());
+                    fixed_cols[4].push(alt_s.to_string());
+                    fixed_cols[5]
+                        .push(unsafe { std::str::from_utf8_unchecked(qual_b) }.to_string());
+                    fixed_cols[6]
+                        .push(unsafe { std::str::from_utf8_unchecked(filter_b) }.to_string());
+                    fixed_cols[7]
+                        .push(unsafe { std::str::from_utf8_unchecked(info_b) }.to_string());
+                    let mut variant = String::with_capacity(
+                        chrom.len() + pos_s.len() + ref_s.len() + alt_s.len() + 3,
+                    );
+                    variant.push_str(chrom);
+                    variant.push('_');
+                    variant.push_str(pos_s);
+                    variant.push('_');
+                    variant.push_str(ref_s);
+                    variant.push('_');
+                    variant.push_str(alt_s);
+                    var_ids.push(variant);
+                }
+                line_start = next_line;
+            }
+            for (key, values) in key_ids.into_iter().zip(fixed_cols.into_iter()) {
+                fixed_info.insert(key, values);
+            }
+            return Some(VcfData {
+                variants: var_ids,
+                fixed_info,
+                contigs: contig_lines,
+                comments: comment_lines,
+                ..Default::default()
+            });
+        }
+        let mut text = String::new();
+        if reader.read_to_string(&mut text).is_err() {
+            return None;
+        }
+        let reserve_rows = text.len() / 50;
+        var_ids.reserve(reserve_rows);
+        let mut fixed_cols = Vec::<Vec<String>>::new();
+        for line_raw in text.lines() {
+            let line = line_raw.trim_end_matches('\r');
+            if line.starts_with('#') {
+                if line.starts_with("##contig=") {
+                    contig_lines.push(line.to_string());
+                }
+                if line.starts_with("#CHROM") {
+                    let parts: Vec<&str> = line.split('\t').collect();
+                    key_ids = parts
+                        .iter()
+                        .take(8)
+                        .map(|s| s.trim_start_matches('#').to_string())
+                        .collect();
+                    fixed_cols = (0..key_ids.len())
+                        .map(|_| Vec::with_capacity(reserve_rows))
+                        .collect();
+                } else {
+                    comment_lines.push(line.to_string());
+                }
+            } else {
+                if key_ids.len() < 8 || fixed_cols.len() < 8 {
+                    return None;
+                }
+                let mut parts = line.split('\t');
+                let chrom = parts.next()?;
+                let pos = parts.next()?;
+                let id = parts.next()?;
+                let ref_allele = parts.next()?;
+                let alt_allele = parts.next()?;
+                let qual = parts.next()?;
+                let filter = parts.next()?;
+                let info = parts.next()?;
+                if biallelic_only && (ref_allele.len() > 1 || alt_allele.len() > 1) {
+                    continue;
+                }
+                fixed_cols[0].push(chrom.to_string());
+                fixed_cols[1].push(pos.to_string());
+                fixed_cols[2].push(id.to_string());
+                fixed_cols[3].push(ref_allele.to_string());
+                fixed_cols[4].push(alt_allele.to_string());
+                fixed_cols[5].push(qual.to_string());
+                fixed_cols[6].push(filter.to_string());
+                fixed_cols[7].push(info.to_string());
+                var_ids.push(format!("{chrom}_{pos}_{ref_allele}_{alt_allele}"));
+            }
+        }
+        for (key, values) in key_ids.into_iter().zip(fixed_cols.into_iter()) {
+            fixed_info.insert(key, values);
+        }
+        return Some(VcfData {
+            variants: var_ids,
+            fixed_info,
+            contigs: contig_lines,
+            comments: comment_lines,
+            ..Default::default()
+        });
+    }
     for line in BufReader::new(reader).lines().map_while(Result::ok) {
         if line.starts_with('#') {
             if line.starts_with("##contig=") {
@@ -124,55 +687,80 @@ pub fn load_VCF(
                     .map(|s| s.trim_start_matches('#').to_string())
                     .collect();
                 for key in &key_ids {
-                    fixed_info.insert(key.clone(), PyValue::StringVec(Vec::new()));
+                    fixed_info.insert(key.clone(), Vec::new());
                 }
             } else {
                 comment_lines.push(line);
             }
         } else {
-            let list_val: Vec<String> =
-                line.trim_end().split('\t').map(|s| s.to_string()).collect();
-            if biallelic_only && (list_val[3].len() > 1 || list_val[4].len() > 1) {
-                continue;
-            }
             if load_sample {
-                obs_dat.push(list_val.iter().skip(8).cloned().collect());
-            }
-            for (i, key) in key_ids.iter().enumerate() {
-                if let Some(PyValue::StringVec(values)) = fixed_info.get_mut(key) {
-                    values.push(list_val[i].clone());
+                let list_val: Vec<String> =
+                    line.trim_end().split('\t').map(|s| s.to_string()).collect();
+                if biallelic_only && (list_val[3].len() > 1 || list_val[4].len() > 1) {
+                    continue;
                 }
+                obs_dat.push(list_val.iter().skip(8).cloned().collect());
+                for (i, key) in key_ids.iter().enumerate() {
+                    if let Some(values) = fixed_info.get_mut(key) {
+                        values.push(list_val[i].clone());
+                    }
+                }
+                var_ids.push(
+                    [0usize, 1, 3, 4]
+                        .iter()
+                        .map(|&i| list_val[i].clone())
+                        .collect::<Vec<_>>()
+                        .join("_"),
+                );
+            } else {
+                let line_trimmed = line.trim_end();
+                let list_val: Vec<&str> = line_trimmed.split('\t').take(key_ids.len()).collect();
+                if list_val.len() < key_ids.len() || list_val.len() < 5 {
+                    return None;
+                }
+                if biallelic_only && (list_val[3].len() > 1 || list_val[4].len() > 1) {
+                    continue;
+                }
+                for (i, key) in key_ids.iter().enumerate() {
+                    if let Some(values) = fixed_info.get_mut(key) {
+                        values.push(list_val[i].to_string());
+                    }
+                }
+                var_ids.push(format!(
+                    "{}_{}_{}_{}",
+                    list_val[0], list_val[1], list_val[3], list_val[4]
+                ));
             }
-            var_ids.push(
-                [0usize, 1, 3, 4]
-                    .iter()
-                    .map(|&i| list_val[i].clone())
-                    .collect::<Vec<_>>()
-                    .join("_"),
-            );
         }
     }
-    let mut rv = BTreeMap::new();
-    rv.insert("variants".to_string(), PyValue::StringVec(var_ids));
-    rv.insert("FixedINFO".to_string(), PyValue::Map(fixed_info));
-    rv.insert("contigs".to_string(), PyValue::StringVec(contig_lines));
-    rv.insert("comments".to_string(), PyValue::StringVec(comment_lines));
+    let mut rv = VcfData {
+        variants: var_ids,
+        fixed_info,
+        contigs: contig_lines,
+        comments: comment_lines,
+        ..Default::default()
+    };
     if load_sample {
-        rv.insert("samples".to_string(), PyValue::StringVec(obs_ids));
+        rv.samples = obs_ids;
         let (geno_info, n_snp_tagged) = parse_sample_info(&obs_dat, sparse, format_list)?;
-        rv.insert("GenoINFO".to_string(), PyValue::Map(geno_info));
-        rv.insert("n_SNP_tagged".to_string(), PyValue::I64Vec(n_snp_tagged));
+        rv.geno_info = Some(geno_info);
+        rv.n_snp_tagged = n_snp_tagged;
     }
     Some(rv)
 }
 
-pub fn write_VCF_to_hdf5(vcf_dat: &BTreeMap<String, PyValue>, out_file: &str) -> Option<()> {
+pub fn write_VCF_to_hdf5(vcf_dat: &VcfData, out_file: &str) -> Option<()> {
     let file = match hdf5::File::create(out_file) {
         Ok(f) => f,
         Err(_) => return None,
     };
-    for key in ["contigs", "samples", "variants", "comments"] {
-        if let Some(PyValue::StringVec(values)) = vcf_dat.get(key) {
+    for (key, values) in [
+        ("contigs", &vcf_dat.contigs),
+        ("samples", &vcf_dat.samples),
+        ("variants", &vcf_dat.variants),
+        ("comments", &vcf_dat.comments),
+    ] {
+        if !values.is_empty() {
             let data: Vec<hdf5::types::VarLenUnicode> = values
                 .iter()
                 .filter_map(|s| s.parse::<hdf5::types::VarLenUnicode>().ok())
@@ -187,86 +775,79 @@ pub fn write_VCF_to_hdf5(vcf_dat: &BTreeMap<String, PyValue>, out_file: &str) ->
             }
         }
     }
-    if let Some(PyValue::Map(fixed_info)) = vcf_dat.get("FixedINFO") {
+    if !vcf_dat.fixed_info.is_empty() {
         let group = match file.create_group("FixedINFO") {
             Ok(g) => g,
             Err(_) => return None,
         };
-        for (key, value) in fixed_info {
-            if let PyValue::StringVec(values) = value {
-                let data: Vec<hdf5::types::VarLenUnicode> = values
-                    .iter()
-                    .filter_map(|s| s.parse::<hdf5::types::VarLenUnicode>().ok())
-                    .collect();
-                if group
-                    .new_dataset_builder()
-                    .with_data(&data)
-                    .create(key.as_str())
-                    .is_err()
-                {
-                    return None;
-                }
+        for (key, values) in &vcf_dat.fixed_info {
+            let data: Vec<hdf5::types::VarLenUnicode> = values
+                .iter()
+                .filter_map(|s| s.parse::<hdf5::types::VarLenUnicode>().ok())
+                .collect();
+            if group
+                .new_dataset_builder()
+                .with_data(&data)
+                .create(key.as_str())
+                .is_err()
+            {
+                return None;
             }
         }
     }
-    if let Some(PyValue::Map(geno_info)) = vcf_dat.get("GenoINFO") {
+    if let Some(geno_info) = &vcf_dat.geno_info {
         let group = match file.create_group("GenoINFO") {
             Ok(g) => g,
             Err(_) => return None,
         };
-        for (key, value) in geno_info {
-            match value {
-                PyValue::StringVec(values) => {
-                    let data: Vec<hdf5::types::VarLenUnicode> = values
-                        .iter()
-                        .filter_map(|s| s.parse::<hdf5::types::VarLenUnicode>().ok())
-                        .collect();
-                    if group
-                        .new_dataset_builder()
-                        .with_data(&data)
-                        .create(key.as_str())
-                        .is_err()
-                    {
-                        return None;
-                    }
-                }
-                PyValue::StringMatrix(rows) => {
-                    let flat: Vec<hdf5::types::VarLenUnicode> = rows
-                        .iter()
-                        .flatten()
-                        .filter_map(|s| s.parse::<hdf5::types::VarLenUnicode>().ok())
-                        .collect();
-                    let shape = (rows.len(), rows.first().map_or(0, Vec::len));
-                    if group
-                        .new_dataset_builder()
-                        .with_data(&flat)
-                        .create(key.as_str())
-                        .is_err()
-                    {
-                        return None;
-                    }
-                    let shape_key = format!("{key}_shape");
-                    let shape_data = [shape.0 as i64, shape.1 as i64];
-                    if group
-                        .new_dataset_builder()
-                        .with_data(&shape_data)
-                        .create(shape_key.as_str())
-                        .is_err()
-                    {
-                        return None;
-                    }
-                }
-                PyValue::I64Vec(values) => {
-                    if group
-                        .new_dataset_builder()
-                        .with_data(values)
-                        .create(key.as_str())
-                        .is_err()
-                    {
-                        return None;
-                    }
-                }
-                _ => {}
+        for (key, values) in &geno_info.string_vecs {
+            let data: Vec<hdf5::types::VarLenUnicode> = values
+                .iter()
+                .filter_map(|s| s.parse::<hdf5::types::VarLenUnicode>().ok())
+                .collect();
+            if group
+                .new_dataset_builder()
+                .with_data(&data)
+                .create(key.as_str())
+                .is_err()
+            {
+                return None;
+            }
+        }
+        for (key, rows) in &geno_info.string_matrices {
+            let flat: Vec<hdf5::types::VarLenUnicode> = rows
+                .iter()
+                .flatten()
+                .filter_map(|s| s.parse::<hdf5::types::VarLenUnicode>().ok())
+                .collect();
+            let shape = (rows.len(), rows.first().map_or(0, Vec::len));
+            if group
+                .new_dataset_builder()
+                .with_data(&flat)
+                .create(key.as_str())
+                .is_err()
+            {
+                return None;
+            }
+            let shape_key = format!("{key}_shape");
+            let shape_data = [shape.0 as i64, shape.1 as i64];
+            if group
+                .new_dataset_builder()
+                .with_data(&shape_data)
+                .create(shape_key.as_str())
+                .is_err()
+            {
+                return None;
+            }
+        }
+        for (key, values) in &geno_info.i64_vecs {
+            if group
+                .new_dataset_builder()
+                .with_data(values)
+                .create(key.as_str())
+                .is_err()
+            {
+                return None;
             }
         }
     }
@@ -274,7 +855,7 @@ pub fn write_VCF_to_hdf5(vcf_dat: &BTreeMap<String, PyValue>, out_file: &str) ->
 }
 
 pub fn read_sparse_GeneINFO(
-    geno_info: &BTreeMap<String, PyValue>,
+    geno_info: &VcfGenoInfo,
     keys: Option<&[String]>,
     axes: Option<&[i64]>,
 ) -> Option<BTreeMap<String, Array2<f64>>> {
@@ -284,22 +865,22 @@ pub fn read_sparse_GeneINFO(
     let axes = axes
         .map(|x| x.to_vec())
         .unwrap_or_else(|| vec![-1; keys.len()]);
-    let shape = match geno_info.get("shape") {
-        Some(PyValue::I64Vec(v)) if v.len() == 2 => (v[0] as usize, v[1] as usize),
+    let shape = match geno_info.i64_vecs.get("shape") {
+        Some(v) if v.len() == 2 => (v[0] as usize, v[1] as usize),
         _ => return None,
     };
-    let indptr = match geno_info.get("indptr") {
-        Some(PyValue::I64Vec(v)) => v,
+    let indptr = match geno_info.i64_vecs.get("indptr") {
+        Some(v) => v,
         _ => return None,
     };
-    let indices = match geno_info.get("indices") {
-        Some(PyValue::I64Vec(v)) => v,
+    let indices = match geno_info.i64_vecs.get("indices") {
+        Some(v) => v,
         _ => return None,
     };
     let mut rv = BTreeMap::new();
     for (ki, key) in keys.iter().enumerate() {
-        let values = match geno_info.get(key) {
-            Some(PyValue::StringVec(v)) => v,
+        let values = match geno_info.string_vecs.get(key) {
+            Some(v) => v,
             _ => return None,
         };
         let mut mat = ndarray::Array2::<f64>::zeros((shape.1, shape.0));
@@ -381,11 +962,7 @@ pub fn GenoINFO_maker(
     Some(rv)
 }
 
-pub fn write_VCF(
-    out_file: &str,
-    vcf_dat: &BTreeMap<String, PyValue>,
-    geno_tags: Option<&[String]>,
-) -> Option<()> {
+pub fn write_VCF(out_file: &str, vcf_dat: &VcfData, geno_tags: Option<&[String]>) -> Option<()> {
     let geno_tags = geno_tags
         .map(|x| x.to_vec())
         .unwrap_or_else(|| vec!["GT".into(), "AD".into(), "DP".into(), "PL".into()]);
@@ -397,19 +974,17 @@ pub fn write_VCF(
         Ok(f) => f,
         Err(_) => return None,
     };
-    if let Some(PyValue::StringVec(comments)) = vcf_dat.get("comments") {
-        for line in comments {
-            let mut tag_found = false;
-            if line.starts_with("##FORMAT=<ID=") {
-                for tag in &geno_tags {
-                    if line.starts_with(&format!("##FORMAT=<ID={tag}")) {
-                        tag_found = true;
-                    }
+    for line in &vcf_dat.comments {
+        let mut tag_found = false;
+        if line.starts_with("##FORMAT=<ID=") {
+            for tag in &geno_tags {
+                if line.starts_with(&format!("##FORMAT=<ID={tag}")) {
+                    tag_found = true;
                 }
             }
-            if !tag_found && writeln!(f, "{line}").is_err() {
-                return None;
-            }
+        }
+        if !tag_found && writeln!(f, "{line}").is_err() {
+            return None;
         }
     }
     for tag in &geno_tags {
@@ -424,11 +999,7 @@ pub fn write_VCF(
             return None;
         }
     }
-    let samples = match vcf_dat.get("samples") {
-        Some(PyValue::StringVec(v)) => v.clone(),
-        None => Vec::new(),
-        _ => return None,
-    };
+    let samples = vcf_dat.samples.clone();
     let geno_tags = if samples.is_empty() {
         Vec::new()
     } else {
@@ -451,25 +1022,15 @@ pub fn write_VCF(
     if writeln!(f, "#{}", columns.join("\t")).is_err() {
         return None;
     }
-    let variants = match vcf_dat.get("variants") {
-        Some(PyValue::StringVec(v)) => v,
-        _ => return None,
-    };
-    let fixed_info = match vcf_dat.get("FixedINFO") {
-        Some(PyValue::Map(m)) => m,
-        _ => return None,
-    };
-    let geno_info = match vcf_dat.get("GenoINFO") {
-        Some(PyValue::Map(m)) => Some(m),
-        None => None,
-        _ => return None,
-    };
+    let variants = &vcf_dat.variants;
+    let fixed_info = &vcf_dat.fixed_info;
+    let geno_info = vcf_dat.geno_info.as_ref();
     let fixed_cols = ["CHROM", "POS", "ID", "REF", "ALT", "QUAL", "FILTER", "INFO"];
     for i in 0..variants.len() {
         let mut line = Vec::new();
         for col in fixed_cols {
             let values = match fixed_info.get(col) {
-                Some(PyValue::StringVec(v)) => v,
+                Some(v) => v,
                 _ => return None,
             };
             let Some(value) = values.get(i) else {
@@ -485,8 +1046,8 @@ pub fn write_VCF(
             for s in 0..samples.len() {
                 let mut values = Vec::new();
                 for tag in &geno_tags {
-                    let rows = match geno_info.get(tag) {
-                        Some(PyValue::StringMatrix(v)) => v,
+                    let rows = match geno_info.string_matrices.get(tag) {
+                        Some(v) => v,
                         _ => return None,
                     };
                     let Some(row) = rows.get(i) else {
@@ -604,22 +1165,32 @@ pub fn parse_GT_code(code: &str, tag: &str) -> Option<[f64; 3]> {
 }
 
 pub fn match_SNPs(snp_ids1: &[String], snps_ids2: &[String]) -> Vec<Option<usize>> {
-    let mut out = Vec::with_capacity(snp_ids1.len());
-    for id1 in snp_ids1 {
-        out.push(snps_ids2.iter().position(|id2| id2 == id1));
+    let mut map2 = HashMap::with_capacity(snps_ids2.len());
+    for (i, id2) in snps_ids2.iter().enumerate() {
+        map2.entry(id2.as_str()).or_insert(i);
+    }
+    let mut out: Vec<Option<usize>> = snp_ids1
+        .iter()
+        .map(|id1| map2.get(id1.as_str()).copied())
+        .collect();
+    if out.iter().all(Option::is_none) {
+        out = snp_ids1
+            .iter()
+            .map(|id1| {
+                let id1_chr = format!("chr{id1}");
+                map2.get(id1_chr.as_str()).copied()
+            })
+            .collect();
     }
     if out.iter().all(Option::is_none) {
-        out.clear();
-        for id1 in snp_ids1 {
-            let id1_chr = format!("chr{id1}");
-            out.push(snps_ids2.iter().position(|id2| id2 == &id1_chr));
+        let mut chr_map2 = HashMap::with_capacity(snps_ids2.len());
+        for (i, id2) in snps_ids2.iter().enumerate() {
+            chr_map2.entry(format!("chr{id2}")).or_insert(i);
         }
-    }
-    if out.iter().all(Option::is_none) {
-        out.clear();
-        for id1 in snp_ids1 {
-            out.push(snps_ids2.iter().position(|id2| &format!("chr{id2}") == id1));
-        }
+        out = snp_ids1
+            .iter()
+            .map(|id1| chr_map2.get(id1).copied())
+            .collect();
     }
     out
 }
@@ -629,7 +1200,7 @@ pub fn match_VCF_samples(
     vcf_file2: &str,
     gt_tag1: &str,
     gt_tag2: &str,
-) -> Option<BTreeMap<String, PyValue>> {
+) -> Option<VcfSampleMatchResult> {
     let gt_tags1 = [gt_tag1.to_string()];
     let gt_tags2 = [gt_tag2.to_string()];
     let vcf0 = match load_VCF(vcf_file1, true, true, false, Some(&gt_tags1)) {
@@ -640,32 +1211,20 @@ pub fn match_VCF_samples(
         Some(m) => m,
         None => return None,
     };
-    let var0 = match vcf0.get("variants") {
-        Some(PyValue::StringVec(v)) => v.clone(),
-        _ => return None,
-    };
-    let var1 = match vcf1.get("variants") {
-        Some(PyValue::StringVec(v)) => v.clone(),
-        _ => return None,
-    };
-    let donor0 = match vcf0.get("samples") {
-        Some(PyValue::StringVec(v)) => v.clone(),
-        _ => return None,
-    };
-    let donor1 = match vcf1.get("samples") {
-        Some(PyValue::StringVec(v)) => v.clone(),
-        _ => return None,
-    };
-    let geno0 = match vcf0.get("GenoINFO") {
-        Some(PyValue::Map(m)) => match m.get(gt_tag1) {
-            Some(PyValue::StringMatrix(v)) => v.clone(),
+    let var0 = vcf0.variants.clone();
+    let var1 = vcf1.variants.clone();
+    let donor0 = vcf0.samples.clone();
+    let donor1 = vcf1.samples.clone();
+    let geno0 = match &vcf0.geno_info {
+        Some(m) => match m.string_matrices.get(gt_tag1) {
+            Some(v) => v.clone(),
             _ => return None,
         },
         _ => return None,
     };
-    let geno1 = match vcf1.get("GenoINFO") {
-        Some(PyValue::Map(m)) => match m.get(gt_tag2) {
-            Some(PyValue::StringMatrix(v)) => v.clone(),
+    let geno1 = match &vcf1.geno_info {
+        Some(m) => match m.string_matrices.get(gt_tag2) {
+            Some(v) => v.clone(),
             _ => return None,
         },
         _ => return None,
@@ -723,35 +1282,20 @@ pub fn match_VCF_samples(
             matched[[i, j]] = diff[[d0, d1]];
         }
     }
-    let mut rv = BTreeMap::new();
-    rv.insert(
-        "matched_GPb_diff".to_string(),
-        PyValue::ArrayF64(matched.into_dyn()),
-    );
-    rv.insert(
-        "matched_donors1".to_string(),
-        PyValue::StringVec(idx0.iter().map(|&i| donor0[i].clone()).collect()),
-    );
-    rv.insert(
-        "matched_donors2".to_string(),
-        PyValue::StringVec(idx1.iter().map(|&i| donor1[i].clone()).collect()),
-    );
-    rv.insert(
-        "full_GPb_diff".to_string(),
-        PyValue::ArrayF64(diff.into_dyn()),
-    );
-    rv.insert("full_donors1".to_string(), PyValue::StringVec(donor0));
-    rv.insert("full_donors2".to_string(), PyValue::StringVec(donor1));
-    rv.insert(
-        "matched_n_var".to_string(),
-        PyValue::I64(pairs.len() as i64),
-    );
-    Some(rv)
+    Some(VcfSampleMatchResult {
+        matched_gpb_diff: matched,
+        matched_donors1: idx0.iter().map(|&i| donor0[i].clone()).collect(),
+        matched_donors2: idx1.iter().map(|&i| donor1[i].clone()).collect(),
+        full_gpb_diff: diff,
+        full_donors1: donor0,
+        full_donors2: donor1,
+        matched_n_var: pairs.len(),
+    })
 }
 
 pub fn snp_gene_match(
-    var_fixed_info: &BTreeMap<String, PyValue>,
-    gene_df: &BTreeMap<String, PyValue>,
+    var_fixed_info: &BTreeMap<String, Vec<String>>,
+    gene_df: &GeneData,
     gene_key: Option<&str>,
     multi_gene: bool,
     gaps: Option<&[i64]>,
@@ -761,36 +1305,21 @@ pub fn snp_gene_match(
     let gaps: Vec<i64> = gaps
         .map(|x| x.to_vec())
         .unwrap_or_else(|| vec![0, 1000, 10000, 100000]);
-    let chroms = match var_fixed_info.get("CHROM") {
-        Some(PyValue::StringVec(v)) => v,
-        _ => return None,
-    };
+    let chroms = var_fixed_info.get("CHROM")?;
     let pos: Vec<i64> = match var_fixed_info.get("POS") {
-        Some(PyValue::StringVec(v)) => v.iter().filter_map(|x| x.parse().ok()).collect(),
-        Some(PyValue::I64Vec(v)) => v.clone(),
+        Some(v) => v.iter().filter_map(|x| x.parse().ok()).collect(),
         _ => return None,
     };
     if pos.len() != chroms.len() {
         return None;
     }
-    let gene_chrom = match gene_df.get("chrom") {
-        Some(PyValue::StringVec(v)) => v,
-        _ => return None,
-    };
-    let gene_start: Vec<i64> = match gene_df.get("start") {
-        Some(PyValue::I64Vec(v)) => v.clone(),
-        Some(PyValue::F64Vec(v)) => v.iter().map(|x| *x as i64).collect(),
-        _ => return None,
-    };
-    let gene_stop: Vec<i64> = match gene_df.get("stop") {
-        Some(PyValue::I64Vec(v)) => v.clone(),
-        Some(PyValue::F64Vec(v)) => v.iter().map(|x| *x as i64).collect(),
-        _ => return None,
-    };
-    let gene_names = match gene_df.get(gene_key) {
-        Some(PyValue::StringVec(v)) => v,
-        _ => return None,
-    };
+    if gene_key != "gene" {
+        return None;
+    }
+    let gene_chrom = &gene_df.chrom;
+    let gene_start = &gene_df.start;
+    let gene_stop = &gene_df.stop;
+    let gene_names = &gene_df.gene;
     let mut gene_list = Vec::new();
     let mut flag_list = Vec::new();
     for (i, chrom) in chroms.iter().enumerate() {

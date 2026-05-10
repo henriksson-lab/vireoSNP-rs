@@ -1,4 +1,4 @@
-use ndarray::{s, Array1, Array2, Array3, Ix2};
+use ndarray::{s, Array1, Array2, Array3};
 use vireo_rs::vireo_snp::plot::base_plot;
 use vireo_rs::vireo_snp::utils::vireo_model::Vireo;
 use vireo_rs::vireo_snp::utils::{
@@ -8,7 +8,28 @@ use vireo_rs::vireo_snp::utils::{
     vireo_bulk::{self, VireoBulk},
     vireo_doublet, vireo_wrap,
 };
-use vireo_rs::PyValue;
+
+fn dense(mat: &io_utils::CountMatrix) -> Array2<f64> {
+    match mat {
+        io_utils::CountMatrix::Dense(x) => x.clone(),
+        io_utils::CountMatrix::DenseU32(x) => x.mapv(|v| v as f64),
+        io_utils::CountMatrix::SparseCsc {
+            nrows,
+            ncols,
+            indptr,
+            indices,
+            data,
+        } => {
+            let mut out = Array2::<f64>::zeros((*nrows, *ncols));
+            for col in 0..*ncols {
+                for p in indptr[col]..indptr[col + 1] {
+                    out[[indices[p], col]] = data[p];
+                }
+            }
+            out
+        }
+    }
+}
 
 #[test]
 fn reads_cellsnp_fixture() {
@@ -17,18 +38,10 @@ fn reads_cellsnp_fixture() {
         Some(&["AD".to_string(), "DP".to_string()]),
     );
     let dat = dat.unwrap();
-    let PyValue::StringVec(samples) = dat.get("samples").unwrap() else {
-        panic!("missing samples");
-    };
-    let PyValue::StringVec(variants) = dat.get("variants").unwrap() else {
-        panic!("missing variants");
-    };
-    let PyValue::ArrayF64(ad) = dat.get("AD").unwrap() else {
-        panic!("missing AD");
-    };
-    let PyValue::ArrayF64(dp) = dat.get("DP").unwrap() else {
-        panic!("missing DP");
-    };
+    let samples = &dat.samples;
+    let variants = &dat.variants;
+    let ad = dense(dat.layers.get("AD").expect("missing AD"));
+    let dp = dense(dat.layers.get("DP").expect("missing DP"));
     assert!(!samples.is_empty());
     assert!(!variants.is_empty());
     assert_eq!(ad.shape(), dp.shape());
@@ -43,16 +56,10 @@ fn computes_binomial_coefficients_on_real_count_slice() {
         Some(&["AD".to_string(), "DP".to_string()]),
     );
     let dat = dat.unwrap();
-    let PyValue::ArrayF64(ad) = dat.get("AD").unwrap() else {
-        panic!("missing AD");
-    };
-    let PyValue::ArrayF64(dp) = dat.get("DP").unwrap() else {
-        panic!("missing DP");
-    };
-    let ad = ad.clone().into_dimensionality::<Ix2>().unwrap();
-    let dp = dp.clone().into_dimensionality::<Ix2>().unwrap();
-    let ad = ad.slice(s![0..10, 0..10]).to_owned().into_dyn();
-    let dp = dp.slice(s![0..10, 0..10]).to_owned().into_dyn();
+    let ad = dense(dat.layers.get("AD").expect("missing AD"));
+    let dp = dense(dat.layers.get("DP").expect("missing DP"));
+    let ad = ad.slice(s![0..10, 0..10]).to_owned();
+    let dp = dp.slice(s![0..10, 0..10]).to_owned();
     let coeff = vireo_base::get_binom_coeff(&ad, &dp, 700.0);
     assert!(!coeff.is_empty());
     assert!(coeff.iter().all(|v| v.is_finite()));
@@ -64,10 +71,8 @@ fn amplifies_log_likelihood_array_without_pyvalue() {
         (3, 3),
         vec![-5.0, -2.0, -3.0, 10.0, 7.0, 8.0, 0.5, 0.25, 0.0],
     )
-    .unwrap()
-    .into_dyn();
+    .unwrap();
     let amplified = vireo_base::loglik_amplify(&x, Some(1)).unwrap();
-    let amplified = amplified.into_dimensionality::<Ix2>().unwrap();
     assert_eq!(amplified[[0, 1]], 0.0);
     assert_eq!(amplified[[1, 0]], 0.0);
     assert_eq!(amplified[[2, 0]], 0.0);
@@ -76,26 +81,18 @@ fn amplifies_log_likelihood_array_without_pyvalue() {
 
 #[test]
 fn normalizes_arrays_without_pyvalue() {
-    let x = Array2::<f64>::from_shape_vec((2, 3), vec![1.0, 1.0, 2.0, 2.0, 3.0, 5.0])
-        .unwrap()
-        .into_dyn();
+    let x = Array2::<f64>::from_shape_vec((2, 3), vec![1.0, 1.0, 2.0, 2.0, 3.0, 5.0]).unwrap();
     let normalized = vireo_base::normalize(&x, Some(1)).unwrap();
-    let normalized = normalized.into_dimensionality::<Ix2>().unwrap();
     assert!((normalized.row(0).sum() - 1.0).abs() < 1e-12);
     assert!((normalized.row(1).sum() - 1.0).abs() < 1e-12);
     let normalized = vireo_base::tensor_normalize(&x, Some(1)).unwrap();
-    let normalized = normalized.into_dimensionality::<Ix2>().unwrap();
     assert!((normalized.row(0).sum() - 1.0).abs() < 1e-12);
 }
 
 #[test]
 fn computes_logbincoeff_without_pyvalue() {
-    let n = Array2::<f64>::from_shape_vec((1, 3), vec![4.0, 5.0, 6.0])
-        .unwrap()
-        .into_dyn();
-    let k = Array2::<f64>::from_shape_vec((1, 3), vec![2.0, 2.0, 3.0])
-        .unwrap()
-        .into_dyn();
+    let n = Array2::<f64>::from_shape_vec((1, 3), vec![4.0, 5.0, 6.0]).unwrap();
+    let k = Array2::<f64>::from_shape_vec((1, 3), vec![2.0, 2.0, 3.0]).unwrap();
     let out = vireo_base::logbincoeff(&n, &k).unwrap();
     assert_eq!(out.shape(), &[1, 3]);
     assert!(out.iter().all(|v| v.is_finite()));
@@ -125,18 +122,10 @@ fn reads_vartrix_style_matrixmarket_with_optional_vcf() {
         Some("vireo/data/cellSNP_mat/cellSNP.base.vcf.gz"),
     );
     let dat = dat.unwrap();
-    let PyValue::StringVec(samples) = dat.get("samples").unwrap() else {
-        panic!("missing samples");
-    };
-    let PyValue::StringVec(variants) = dat.get("variants").unwrap() else {
-        panic!("missing variants");
-    };
-    let PyValue::ArrayF64(ad) = dat.get("AD").unwrap() else {
-        panic!("missing AD");
-    };
-    let PyValue::ArrayF64(dp) = dat.get("DP").unwrap() else {
-        panic!("missing DP");
-    };
+    let samples = &dat.samples;
+    let variants = &dat.variants;
+    let ad = dense(dat.layers.get("AD").expect("missing AD"));
+    let dp = dense(dat.layers.get("DP").expect("missing DP"));
     assert_eq!(ad.shape(), dp.shape());
     assert_eq!(ad.shape()[0], variants.len());
     assert_eq!(ad.shape()[1], samples.len());
@@ -147,18 +136,12 @@ fn reads_vartrix_style_matrixmarket_with_optional_vcf() {
 fn loads_cells_vcf_sparse_and_materializes_read_layers() {
     let vcf =
         vcf_utils::load_VCF("vireo/data/cells.cellSNP.vcf.gz", false, true, true, None).unwrap();
-    let PyValue::StringVec(variants) = vcf.get("variants").unwrap() else {
-        panic!("missing variants");
-    };
-    let PyValue::StringVec(samples) = vcf.get("samples").unwrap() else {
-        panic!("missing samples");
-    };
-    let PyValue::Map(geno_info) = vcf.get("GenoINFO").unwrap() else {
-        panic!("missing GenoINFO");
-    };
-    assert!(geno_info.contains_key("indices"));
-    assert!(geno_info.contains_key("indptr"));
-    assert!(geno_info.contains_key("shape"));
+    let variants = &vcf.variants;
+    let samples = &vcf.samples;
+    let geno_info = vcf.geno_info.as_ref().expect("missing GenoINFO");
+    assert!(geno_info.i64_vecs.contains_key("indices"));
+    assert!(geno_info.i64_vecs.contains_key("indptr"));
+    assert!(geno_info.i64_vecs.contains_key("shape"));
 
     let dense = vcf_utils::read_sparse_GeneINFO(
         geno_info,
@@ -183,18 +166,10 @@ fn parses_real_donor_vcf_genotypes_to_probabilities() {
         Some(&["GT".to_string(), "PL".to_string()]),
     )
     .unwrap();
-    let PyValue::StringVec(variants) = donor_vcf.get("variants").unwrap() else {
-        panic!("missing variants");
-    };
-    let PyValue::StringVec(samples) = donor_vcf.get("samples").unwrap() else {
-        panic!("missing samples");
-    };
-    let PyValue::Map(geno_info) = donor_vcf.get("GenoINFO").unwrap() else {
-        panic!("missing GenoINFO");
-    };
-    let PyValue::StringMatrix(gt) = geno_info.get("GT").unwrap() else {
-        panic!("missing GT");
-    };
+    let variants = &donor_vcf.variants;
+    let samples = &donor_vcf.samples;
+    let geno_info = donor_vcf.geno_info.as_ref().expect("missing GenoINFO");
+    let gt = geno_info.string_matrices.get("GT").expect("missing GT");
     let gpb = vcf_utils::parse_donor_GPb(gt, "GT", 0.0).unwrap();
     assert_eq!(gpb.shape(), &[variants.len(), samples.len(), 3]);
     for lane in gpb.outer_iter().take(10) {
@@ -214,23 +189,11 @@ fn makes_and_writes_vcf_genoinfo_roundtrip() {
         None,
     )
     .unwrap();
-    let PyValue::StringVec(variants) = vcf.get_mut("variants").unwrap() else {
-        panic!("missing variants");
-    };
-    variants.truncate(5);
-    let PyValue::Map(fixed_info) = vcf.get_mut("FixedINFO").unwrap() else {
-        panic!("missing FixedINFO");
-    };
-    for value in fixed_info.values_mut() {
-        let PyValue::StringVec(values) = value else {
-            panic!("unexpected FixedINFO value");
-        };
+    vcf.variants.truncate(5);
+    for values in vcf.fixed_info.values_mut() {
         values.truncate(5);
     }
-    vcf.insert(
-        "samples".to_string(),
-        PyValue::StringVec(vec!["donor0".to_string(), "donor1".to_string()]),
-    );
+    vcf.samples = vec!["donor0".to_string(), "donor1".to_string()];
 
     let mut gt_prob = Array3::<f64>::zeros((5, 2, 3));
     for i in 0..5 {
@@ -242,15 +205,10 @@ fn makes_and_writes_vcf_genoinfo_roundtrip() {
     let geno_info = vcf_utils::GenoINFO_maker(&gt_prob, &ad_reads, &dp_reads).unwrap();
     assert_eq!(geno_info.get("GT").unwrap().len(), 5);
     assert_eq!(geno_info.get("PL").unwrap()[0].len(), 2);
-    vcf.insert(
-        "GenoINFO".to_string(),
-        PyValue::Map(
-            geno_info
-                .into_iter()
-                .map(|(k, v)| (k, PyValue::StringMatrix(v)))
-                .collect(),
-        ),
-    );
+    vcf.geno_info = Some(vcf_utils::VcfGenoInfo {
+        string_matrices: geno_info,
+        ..Default::default()
+    });
 
     let out_file = std::env::temp_dir().join(format!(
         "vireo-rs-write-vcf-{}-{}.vcf.gz",
@@ -271,20 +229,18 @@ fn makes_and_writes_vcf_genoinfo_roundtrip() {
         Some(&["GT".to_string(), "AD".to_string(), "DP".to_string()]),
     )
     .unwrap();
-    let PyValue::StringVec(samples) = loaded.get("samples").unwrap() else {
-        panic!("missing reloaded samples");
-    };
-    let PyValue::StringVec(variants) = loaded.get("variants").unwrap() else {
-        panic!("missing reloaded variants");
-    };
-    let PyValue::Map(geno_info) = loaded.get("GenoINFO").unwrap() else {
-        panic!("missing reloaded GenoINFO");
-    };
-    assert_eq!(samples, &vec!["donor0".to_string(), "donor1".to_string()]);
-    assert_eq!(variants.len(), 5);
+    let geno_info = loaded
+        .geno_info
+        .as_ref()
+        .expect("missing reloaded GenoINFO");
+    assert_eq!(
+        loaded.samples,
+        vec!["donor0".to_string(), "donor1".to_string()]
+    );
+    assert_eq!(loaded.variants.len(), 5);
     assert!(matches!(
-        geno_info.get("GT"),
-        Some(PyValue::StringMatrix(rows)) if rows.len() == 5 && rows[0].len() == 2
+        geno_info.string_matrices.get("GT"),
+        Some(rows) if rows.len() == 5 && rows[0].len() == 2
     ));
     std::fs::remove_file(out_file).unwrap();
 }
@@ -305,15 +261,9 @@ fn matches_cellsnp_fixture_to_real_donor_vcf() {
     )
     .unwrap();
     let (cell_dat, donor_vcf) = io_utils::match_donor_VCF(cell_dat, donor_vcf).unwrap();
-    let PyValue::StringVec(cell_variants) = cell_dat.get("variants").unwrap() else {
-        panic!("missing matched cell variants");
-    };
-    let PyValue::StringVec(donor_variants) = donor_vcf.get("variants").unwrap() else {
-        panic!("missing matched donor variants");
-    };
-    let PyValue::ArrayF64(ad) = cell_dat.get("AD").unwrap() else {
-        panic!("missing matched AD");
-    };
+    let cell_variants = &cell_dat.variants;
+    let donor_variants = &donor_vcf.variants;
+    let ad = dense(cell_dat.layers.get("AD").expect("missing matched AD"));
     assert!(!cell_variants.is_empty());
     assert_eq!(cell_variants.len(), donor_variants.len());
     assert_eq!(ad.shape()[0], cell_variants.len());
@@ -335,21 +285,12 @@ fn matches_real_donor_vcf_samples() {
         "GT",
     )
     .unwrap();
-    let PyValue::I64(n_var) = matched.get("matched_n_var").unwrap() else {
-        panic!("missing matched_n_var");
-    };
-    let PyValue::StringVec(donors1) = matched.get("matched_donors1").unwrap() else {
-        panic!("missing matched_donors1");
-    };
-    let PyValue::StringVec(donors2) = matched.get("matched_donors2").unwrap() else {
-        panic!("missing matched_donors2");
-    };
-    let PyValue::ArrayF64(diff) = matched.get("matched_GPb_diff").unwrap() else {
-        panic!("missing matched_GPb_diff");
-    };
-    assert!(*n_var > 0);
-    assert_eq!(donors1.len(), donors2.len());
-    assert_eq!(diff.shape(), &[donors1.len(), donors2.len()]);
+    assert!(matched.matched_n_var > 0);
+    assert_eq!(matched.matched_donors1.len(), matched.matched_donors2.len());
+    assert_eq!(
+        matched.matched_gpb_diff.shape(),
+        &[matched.matched_donors1.len(), matched.matched_donors2.len()]
+    );
 }
 
 #[test]
@@ -359,16 +300,10 @@ fn fits_vireo_model_on_real_cellsnp_slice() {
         Some(&["AD".to_string(), "DP".to_string()]),
     );
     let dat = dat.unwrap();
-    let PyValue::ArrayF64(ad) = dat.get("AD").unwrap() else {
-        panic!("missing AD");
-    };
-    let PyValue::ArrayF64(dp) = dat.get("DP").unwrap() else {
-        panic!("missing DP");
-    };
-    let ad = ad.clone().into_dimensionality::<Ix2>().unwrap();
-    let dp = dp.clone().into_dimensionality::<Ix2>().unwrap();
-    let ad = ad.slice(s![0..80, 0..60]).to_owned().into_dyn();
-    let dp = dp.slice(s![0..80, 0..60]).to_owned().into_dyn();
+    let ad = dense(dat.layers.get("AD").expect("missing AD"));
+    let dp = dense(dat.layers.get("DP").expect("missing DP"));
+    let ad = ad.slice(s![0..80, 0..60]).to_owned();
+    let dp = dp.slice(s![0..80, 0..60]).to_owned();
 
     let mut model = Vireo::default();
     model
@@ -377,17 +312,7 @@ fn fits_vireo_model_on_real_cellsnp_slice() {
         )
         .unwrap();
     model
-        .fit(
-            &ad.into_dimensionality::<Ix2>().unwrap(),
-            &dp.into_dimensionality::<Ix2>().unwrap(),
-            4,
-            1,
-            Some(1e-2),
-            1,
-            false,
-            None,
-            1,
-        )
+        .fit(&ad, &dp, 4, 1, Some(1e-2), 1, false, None, 1)
         .unwrap();
 
     let id_prob = &model.id_prob;
@@ -408,27 +333,13 @@ fn fits_binom_mixture_on_real_cellsnp_slice_without_pyvalue_updates() {
         Some(&["AD".to_string(), "DP".to_string()]),
     )
     .unwrap();
-    let PyValue::ArrayF64(ad) = dat.get("AD").unwrap() else {
-        panic!("missing AD");
-    };
-    let PyValue::ArrayF64(dp) = dat.get("DP").unwrap() else {
-        panic!("missing DP");
-    };
-    let ad = ad
-        .clone()
-        .into_dimensionality::<Ix2>()
-        .unwrap()
-        .slice(s![0..40, 0..30])
-        .to_owned();
-    let dp = dp
-        .clone()
-        .into_dimensionality::<Ix2>()
-        .unwrap()
-        .slice(s![0..40, 0..30])
-        .to_owned();
+    let ad = dense(dat.layers.get("AD").expect("missing AD"));
+    let dp = dense(dat.layers.get("DP").expect("missing DP"));
+    let ad = ad.clone().slice(s![0..40, 0..30]).to_owned();
+    let dp = dp.clone().slice(s![0..40, 0..30]).to_owned();
     let mut model = BinomMixtureVB::default();
     model.__init__(30, 40, 2, false, None, None, None).unwrap();
-    model.fit(&ad, &dp, 2, 5, Some(3), 0, None).unwrap();
+    model.fit(&ad, &dp, 2, 5, Some(3), 0).unwrap();
     let id_prob = &model.id_prob;
     let elbo = &model.elbo_iters;
     assert_eq!(id_prob.shape(), &[30, 2]);
@@ -443,17 +354,9 @@ fn wraps_real_cellsnp_slice_and_writes_donor_outputs() {
         Some(&["AD".to_string(), "DP".to_string()]),
     );
     let dat = dat.unwrap();
-    let PyValue::StringVec(samples) = dat.get("samples").unwrap() else {
-        panic!("missing samples");
-    };
-    let PyValue::ArrayF64(ad) = dat.get("AD").unwrap() else {
-        panic!("missing AD");
-    };
-    let PyValue::ArrayF64(dp) = dat.get("DP").unwrap() else {
-        panic!("missing DP");
-    };
-    let ad = ad.clone().into_dimensionality::<Ix2>().unwrap();
-    let dp = dp.clone().into_dimensionality::<Ix2>().unwrap();
+    let samples = &dat.samples;
+    let ad = dense(dat.layers.get("AD").expect("missing AD"));
+    let dp = dense(dat.layers.get("DP").expect("missing DP"));
     let ad = ad.slice(s![0..50, 0..24]).to_owned();
     let dp = dp.slice(s![0..50, 0..24]).to_owned();
 
@@ -477,16 +380,9 @@ fn wraps_real_cellsnp_slice_and_writes_donor_outputs() {
         3,
     )
     .unwrap();
-    let res_map = &res;
-    let PyValue::ArrayF64(id_prob) = res_map.get("ID_prob").unwrap() else {
-        panic!("missing ID_prob");
-    };
-    let PyValue::ArrayF64(gt_prob) = res_map.get("GT_prob").unwrap() else {
-        panic!("missing GT_prob");
-    };
-    let PyValue::ArrayF64(doublet_prob) = res_map.get("doublet_prob").unwrap() else {
-        panic!("missing doublet_prob");
-    };
+    let id_prob = &res.id_prob;
+    let gt_prob = &res.gt_prob;
+    let doublet_prob = &res.doublet_prob;
     assert_eq!(id_prob.shape(), &[24, 2]);
     assert_eq!(gt_prob.shape(), &[50, 2, 3]);
     assert_eq!(doublet_prob.shape(), &[24, 1]);
@@ -543,14 +439,8 @@ fn scores_variant_elbo_gain_on_real_count_slice() {
         Some(&["AD".to_string(), "DP".to_string()]),
     );
     let dat = dat.unwrap();
-    let PyValue::ArrayF64(ad) = dat.get("AD").unwrap() else {
-        panic!("expected AD");
-    };
-    let PyValue::ArrayF64(dp) = dat.get("DP").unwrap() else {
-        panic!("expected DP");
-    };
-    let ad = ad.clone().into_dimensionality::<Ix2>().unwrap();
-    let dp = dp.clone().into_dimensionality::<Ix2>().unwrap();
+    let ad = dense(dat.layers.get("AD").expect("expected AD"));
+    let dp = dense(dat.layers.get("DP").expect("expected DP"));
     let ad = ad.slice(s![0..20, 0..12]).to_owned();
     let dp = dp.slice(s![0..20, 0..12]).to_owned();
     let mut id_prob = Array2::<f64>::zeros((12, 2));
@@ -570,24 +460,10 @@ fn selects_donors_from_real_vireo_model_arrays_without_pyvalue() {
         Some(&["AD".to_string(), "DP".to_string()]),
     );
     let dat = dat.unwrap();
-    let PyValue::ArrayF64(ad) = dat.get("AD").unwrap() else {
-        panic!("expected AD");
-    };
-    let PyValue::ArrayF64(dp) = dat.get("DP").unwrap() else {
-        panic!("expected DP");
-    };
-    let ad = ad
-        .clone()
-        .into_dimensionality::<Ix2>()
-        .unwrap()
-        .slice(s![0..50, 0..24])
-        .to_owned();
-    let dp = dp
-        .clone()
-        .into_dimensionality::<Ix2>()
-        .unwrap()
-        .slice(s![0..50, 0..24])
-        .to_owned();
+    let ad = dense(dat.layers.get("AD").expect("expected AD"));
+    let dp = dense(dat.layers.get("DP").expect("expected DP"));
+    let ad = ad.clone().slice(s![0..50, 0..24]).to_owned();
+    let dp = dp.clone().slice(s![0..50, 0..24]).to_owned();
 
     let mut model = Vireo::default();
     model
@@ -612,24 +488,10 @@ fn computes_beta_entropy_from_real_vireo_theta_arrays_without_pyvalue() {
         Some(&["AD".to_string(), "DP".to_string()]),
     );
     let dat = dat.unwrap();
-    let PyValue::ArrayF64(ad) = dat.get("AD").unwrap() else {
-        panic!("expected AD");
-    };
-    let PyValue::ArrayF64(dp) = dat.get("DP").unwrap() else {
-        panic!("expected DP");
-    };
-    let ad = ad
-        .clone()
-        .into_dimensionality::<Ix2>()
-        .unwrap()
-        .slice(s![0..50, 0..24])
-        .to_owned();
-    let dp = dp
-        .clone()
-        .into_dimensionality::<Ix2>()
-        .unwrap()
-        .slice(s![0..50, 0..24])
-        .to_owned();
+    let ad = dense(dat.layers.get("AD").expect("expected AD"));
+    let dp = dense(dat.layers.get("DP").expect("expected DP"));
+    let ad = ad.clone().slice(s![0..50, 0..24]).to_owned();
+    let dp = dp.clone().slice(s![0..50, 0..24]).to_owned();
     let mut model = Vireo::default();
     model
         .__init__(
@@ -672,9 +534,7 @@ fn matches_real_variant_ids_without_pyvalue() {
         Some(&["AD".to_string(), "DP".to_string()]),
     );
     let dat = dat.unwrap();
-    let PyValue::StringVec(variants) = dat.get("variants").unwrap() else {
-        panic!("expected variants");
-    };
+    let variants = &dat.variants;
     let ref_ids = variants[0..10].to_vec();
     let new_ids = variants[3..13].to_vec();
     let matched = vireo_base::r#match(&ref_ids, &new_ids, true);
@@ -761,24 +621,10 @@ fn runs_bulk_likelihood_ratio_without_pyvalue() {
         Some(&["AD".to_string(), "DP".to_string()]),
     )
     .unwrap();
-    let PyValue::ArrayF64(ad) = dat.get("AD").unwrap() else {
-        panic!("missing AD");
-    };
-    let PyValue::ArrayF64(dp) = dat.get("DP").unwrap() else {
-        panic!("missing DP");
-    };
-    let ad = ad
-        .clone()
-        .into_dimensionality::<Ix2>()
-        .unwrap()
-        .slice(s![0..12, 0])
-        .to_owned();
-    let dp = dp
-        .clone()
-        .into_dimensionality::<Ix2>()
-        .unwrap()
-        .slice(s![0..12, 0])
-        .to_owned();
+    let ad = dense(dat.layers.get("AD").expect("missing AD"));
+    let dp = dense(dat.layers.get("DP").expect("missing DP"));
+    let ad = ad.clone().slice(s![0..12, 0]).to_owned();
+    let dp = dp.clone().slice(s![0..12, 0]).to_owned();
     let mut gt_prob = Array3::<f64>::zeros((12, 2, 3));
     for v in 0..12 {
         gt_prob[[v, 0, v % 3]] = 1.0;
@@ -800,14 +646,8 @@ fn fits_bulk_model_on_real_count_slice_without_pyvalue() {
         Some(&["AD".to_string(), "DP".to_string()]),
     )
     .unwrap();
-    let PyValue::ArrayF64(ad) = dat.get("AD").unwrap() else {
-        panic!("missing AD");
-    };
-    let PyValue::ArrayF64(dp) = dat.get("DP").unwrap() else {
-        panic!("missing DP");
-    };
-    let ad_mat = ad.clone().into_dimensionality::<Ix2>().unwrap();
-    let dp_mat = dp.clone().into_dimensionality::<Ix2>().unwrap();
+    let ad_mat = dense(dat.layers.get("AD").expect("missing AD"));
+    let dp_mat = dense(dat.layers.get("DP").expect("missing DP"));
     let idx: Vec<usize> = (0..ad_mat.nrows())
         .filter(|&i| dp_mat[[i, 0]] > 0.0 && ad_mat[[i, 0]] <= dp_mat[[i, 0]])
         .take(20)
@@ -841,34 +681,21 @@ fn matches_snps_to_genes_without_pyvalue() {
         None,
     )
     .unwrap();
-    let PyValue::Map(fixed_info) = vcf.get("FixedINFO").unwrap() else {
-        panic!("missing FixedINFO");
-    };
-    let mut genes = std::collections::BTreeMap::new();
-    genes.insert(
-        "chrom".to_string(),
-        PyValue::StringVec(vec!["1".to_string(), "2".to_string(), "chr1".to_string()]),
-    );
-    genes.insert("start".to_string(), PyValue::I64Vec(vec![0, 0, 0]));
-    genes.insert(
-        "stop".to_string(),
-        PyValue::I64Vec(vec![1_000_000_000, 1_000_000_000, 1_000_000_000]),
-    );
-    genes.insert(
-        "gene".to_string(),
-        PyValue::StringVec(vec![
+    let genes = vcf_utils::GeneData {
+        chrom: vec!["1".to_string(), "2".to_string(), "chr1".to_string()],
+        start: vec![0, 0, 0],
+        stop: vec![1_000_000_000, 1_000_000_000, 1_000_000_000],
+        gene: vec![
             "gene_chr1".to_string(),
             "gene_chr2".to_string(),
             "gene_chr1_prefixed".to_string(),
-        ]),
-    );
-    let (gene_list, flags) =
-        vcf_utils::snp_gene_match(fixed_info, &genes, None, true, Some(&[0, 1000]), false).unwrap();
-    let PyValue::StringVec(variants) = vcf.get("variants").unwrap() else {
-        panic!("missing variants");
+        ],
     };
-    assert_eq!(gene_list.len(), variants.len());
-    assert_eq!(flags.len(), variants.len());
+    let (gene_list, flags) =
+        vcf_utils::snp_gene_match(&vcf.fixed_info, &genes, None, true, Some(&[0, 1000]), false)
+            .unwrap();
+    assert_eq!(gene_list.len(), vcf.variants.len());
+    assert_eq!(flags.len(), vcf.variants.len());
 }
 
 #[test]
@@ -904,7 +731,7 @@ fn makes_whitelists_without_pyvalue() {
 #[test]
 fn materializes_minicode_plot_matrix_without_pyvalue() {
     let barcode_set = vec!["#012".to_string(), "#120".to_string(), "#201".to_string()];
-    let mat = base_plot::minicode_plot(&barcode_set, None, None, "Set3", "none", None).unwrap();
+    let mat = base_plot::minicode_plot(&barcode_set, None, None, "Set3", "none").unwrap();
     assert_eq!(mat.dim(), (3, 3));
     assert_eq!(mat[[0, 0]], 0.0);
     assert_eq!(mat[[1, 1]], 2.0);

@@ -1,5 +1,5 @@
 use crate::vireo_snp::utils::vireo_base;
-use ndarray::{Array2, Ix2};
+use ndarray::Array2;
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use statrs::function::gamma::digamma;
@@ -69,19 +69,13 @@ impl BinomMixtureVB {
                 for v in id.iter_mut() {
                     *v = rng.gen::<f64>();
                 }
-                match vireo_base::normalize(&id.into_dyn(), Some(1)) {
-                    Some(x) => match x.into_dimensionality::<Ix2>() {
-                        Ok(x) => x,
-                        Err(_) => return None,
-                    },
+                match vireo_base::normalize(&id, Some(1)) {
+                    Some(x) => x,
                     None => return None,
                 }
             }
-            Some(x) => match vireo_base::normalize(&x.into_dyn(), Some(1)) {
-                Some(x) => match x.into_dimensionality::<Ix2>() {
-                    Ok(x) => x,
-                    Err(_) => return None,
-                },
+            Some(x) => match vireo_base::normalize(&x, Some(1)) {
+                Some(x) => x,
                 None => return None,
             },
         };
@@ -110,15 +104,10 @@ impl BinomMixtureVB {
         self.theta_s2_prior = (&beta_mu_prior * -1.0 + 1.0) * &beta_sum_prior;
         self.id_prior = match id_prior {
             Some(x) => x,
-            None => {
-                match vireo_base::normalize(&Array2::ones((n_cell, n_donor)).into_dyn(), Some(1)) {
-                    Some(x) => match x.into_dimensionality::<Ix2>() {
-                        Ok(x) => x,
-                        Err(_) => return None,
-                    },
-                    None => return None,
-                }
-            }
+            None => match vireo_base::normalize(&Array2::ones((n_cell, n_donor)), Some(1)) {
+                Some(x) => x,
+                None => return None,
+            },
         };
         Some(())
     }
@@ -166,15 +155,12 @@ impl BinomMixtureVB {
 
     pub fn update_ID_prob(&mut self, log_lik: &Array2<f64>) -> Option<()> {
         let log_lik_prior = log_lik + &self.id_prior.mapv(f64::ln);
-        let amplified = match vireo_base::loglik_amplify(&log_lik_prior.into_dyn(), Some(1)) {
+        let amplified = match vireo_base::loglik_amplify(&log_lik_prior, Some(1)) {
             Some(x) => x,
             None => return None,
         };
         self.id_prob = match vireo_base::normalize(&amplified.mapv(f64::exp), Some(1)) {
-            Some(x) => match x.into_dimensionality::<Ix2>() {
-                Ok(x) => x,
-                Err(_) => return None,
-            },
+            Some(x) => x,
             None => return None,
         };
         Some(())
@@ -253,16 +239,11 @@ impl BinomMixtureVB {
         max_iter: usize,
         max_iter_pre: Option<usize>,
         _random_seed: u64,
-        _kwargs: Option<&std::collections::BTreeMap<String, String>>,
     ) -> Option<()> {
         let max_iter_pre_use = max_iter_pre.unwrap_or(100);
-        let binom_coeff = vireo_base::get_binom_coeff(
-            &ad_arr.clone().into_dyn(),
-            &dp_arr.clone().into_dyn(),
-            700.0,
-        )
-        .iter()
-        .sum::<f64>();
+        let binom_coeff = vireo_base::get_binom_coeff(ad_arr, dp_arr, 700.0)
+            .iter()
+            .sum::<f64>();
         let mut elbo_inits = Vec::new();
         let mut best: Option<(Array2<f64>, Array2<f64>, Array2<f64>, f64, Vec<f64>)> = None;
         for i in 0..n_init {

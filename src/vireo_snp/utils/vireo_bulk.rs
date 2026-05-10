@@ -151,9 +151,13 @@ impl VireoBulk {
 
     pub fn LR_test(
         &self,
-        _kwargs: Option<&std::collections::BTreeMap<String, String>>,
-    ) -> Option<()> {
-        None
+        psi_null: &Array1<f64>,
+        ad: &Array1<f64>,
+        dp: &Array1<f64>,
+        gt_prob: &ndarray::Array3<f64>,
+        log: bool,
+    ) -> Option<(f64, f64)> {
+        LikRatio_test(&self.psi, psi_null, ad, dp, gt_prob, &self.theta, log)
     }
 }
 

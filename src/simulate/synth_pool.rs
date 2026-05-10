@@ -1,4 +1,3 @@
-use crate::PyValue;
 use rand::rngs::StdRng;
 use rand::seq::SliceRandom;
 use rand::SeedableRng;
@@ -138,10 +137,10 @@ pub fn merge_bams(
     None
 }
 
-pub fn main() -> PyValue {
+pub fn main() -> Option<()> {
     let args: Vec<String> = env::args().collect();
     if args.len() <= 1 {
-        return PyValue::None;
+        return None;
     }
     let mut sam_files = None;
     let mut barcodes_files = None;
@@ -207,30 +206,30 @@ pub fn main() -> PyValue {
         i += 1;
     }
     if noregion_file && region_file.is_some() {
-        return PyValue::None;
+        return None;
     }
     let Some(out_dir) = out_dir else {
-        return PyValue::None;
+        return None;
     };
     if fs::create_dir_all(&out_dir).is_err() {
-        return PyValue::None;
+        return None;
     }
     let sam_list: Vec<String> = match sam_files {
         Some(v) => v.split(',').map(|s| s.to_string()).collect(),
-        None => return PyValue::None,
+        None => return None,
     };
     let barcode_files: Vec<String> = match barcodes_files {
         Some(v) => v.split(',').map(|s| s.to_string()).collect(),
-        None => return PyValue::None,
+        None => return None,
     };
     if barcode_files.len() != sam_list.len() {
-        return PyValue::None;
+        return None;
     }
     let mut barcodes_in = Vec::new();
     for path in barcode_files {
         let file = match File::open(path) {
             Ok(file) => file,
-            Err(_) => return PyValue::None,
+            Err(_) => return None,
         };
         barcodes_in.push(
             BufReader::new(file)
@@ -242,7 +241,7 @@ pub fn main() -> PyValue {
     let barcodes_in = if let Some(n_cell) = n_cell {
         match sample_barcodes(barcodes_in, n_cell as usize, minor_sample, random_seed) {
             Some(v) => v,
-            None => return PyValue::None,
+            None => return None,
         }
     } else {
         barcodes_in
@@ -250,7 +249,7 @@ pub fn main() -> PyValue {
     let barcodes_out = match pool_barcodes(&barcodes_in, &out_dir, doublet_rate, true, random_seed)
     {
         Some(v) => v,
-        None => return PyValue::None,
+        None => return None,
     };
     if noregion_file {
         merge_bams(
@@ -262,7 +261,7 @@ pub fn main() -> PyValue {
         );
     } else {
         let Some(region_file) = region_file else {
-            return PyValue::None;
+            return None;
         };
         let vcf = match crate::vireo_snp::utils::vcf_utils::load_VCF(
             &region_file,
@@ -272,19 +271,15 @@ pub fn main() -> PyValue {
             None,
         ) {
             Some(m) => m,
-            None => return PyValue::None,
+            None => return None,
         };
-        let fixed = match vcf.get("FixedINFO") {
-            Some(PyValue::Map(m)) => m,
-            _ => return PyValue::None,
+        let mut chroms = match vcf.fixed_info.get("CHROM") {
+            Some(v) => v.clone(),
+            _ => return None,
         };
-        let mut chroms = match fixed.get("CHROM") {
-            Some(PyValue::StringVec(v)) => v.clone(),
-            _ => return PyValue::None,
-        };
-        let mut positions: Vec<i64> = match fixed.get("POS") {
-            Some(PyValue::StringVec(v)) => v.iter().filter_map(|x| x.parse().ok()).collect(),
-            _ => return PyValue::None,
+        let mut positions: Vec<i64> = match vcf.fixed_info.get("POS") {
+            Some(v) => v.iter().filter_map(|x| x.parse().ok()).collect(),
+            _ => return None,
         };
         if shuffle {
             let mut pairs: Vec<(String, i64)> = chroms.into_iter().zip(positions).collect();
@@ -319,5 +314,5 @@ pub fn main() -> PyValue {
         .args(["index", &format!("{out_dir}/pooled.sorted.bam")])
         .status();
     let _ = fs::remove_file(format!("{out_dir}/pooled.bam"));
-    PyValue::None
+    Some(())
 }

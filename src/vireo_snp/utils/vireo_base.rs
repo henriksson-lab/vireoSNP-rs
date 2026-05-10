@@ -1,8 +1,17 @@
-use ndarray::{Array1, Array2, Array3, ArrayD, Axis};
+use ndarray::{Array1, Array2, Array3, ArrayBase, Axis, Data, Dimension, RemoveAxis};
 use statrs::function::beta::ln_beta;
 use statrs::function::gamma::{digamma, ln_gamma};
 
-pub fn get_binom_coeff(ad: &ArrayD<f64>, dp: &ArrayD<f64>, max_val: f64) -> Vec<f64> {
+pub fn get_binom_coeff<S1, S2, D>(
+    ad: &ArrayBase<S1, D>,
+    dp: &ArrayBase<S2, D>,
+    max_val: f64,
+) -> Vec<f64>
+where
+    S1: Data<Elem = f64>,
+    S2: Data<Elem = f64>,
+    D: Dimension,
+{
     ad.iter()
         .zip(dp.iter())
         .filter(|(_, dp)| **dp > 0.0)
@@ -13,41 +22,73 @@ pub fn get_binom_coeff(ad: &ArrayD<f64>, dp: &ArrayD<f64>, max_val: f64) -> Vec<
         .collect()
 }
 
-pub fn logbincoeff(n: &ArrayD<f64>, k: &ArrayD<f64>) -> Option<ArrayD<f64>> {
+pub fn logbincoeff<S1, S2, D>(
+    n: &ArrayBase<S1, D>,
+    k: &ArrayBase<S2, D>,
+) -> Option<ndarray::Array<f64, D>>
+where
+    S1: Data<Elem = f64>,
+    S2: Data<Elem = f64>,
+    D: Dimension,
+{
     if n.shape() != k.shape() {
         return None;
     }
-    let mut out = n.clone();
+    let mut out = n.to_owned();
     for ((out, n), k) in out.iter_mut().zip(n.iter()).zip(k.iter()) {
         *out = ln_gamma(n + 1.0) - ln_gamma(k + 1.0) - ln_gamma(n - k + 1.0);
     }
     Some(out)
 }
 
-pub fn normalize(x: &ArrayD<f64>, axis: Option<usize>) -> Option<ArrayD<f64>> {
+pub fn normalize<S, D>(x: &ArrayBase<S, D>, axis: Option<usize>) -> Option<ndarray::Array<f64, D>>
+where
+    S: Data<Elem = f64>,
+    D: Dimension + RemoveAxis,
+{
     let axis = axis.unwrap_or_else(|| x.ndim().saturating_sub(1));
     if axis >= x.ndim() {
         return None;
     }
-    let sums = x.sum_axis(Axis(axis)).insert_axis(Axis(axis));
-    Some(x / &sums)
+    let sums = x.sum_axis(Axis(axis));
+    let mut out = x.to_owned();
+    for (mut lane, sum) in out.lanes_mut(Axis(axis)).into_iter().zip(sums.iter()) {
+        lane.mapv_inplace(|v| v / *sum);
+    }
+    Some(out)
 }
 
-pub fn tensor_normalize(x: &ArrayD<f64>, axis: Option<usize>) -> Option<ArrayD<f64>> {
+pub fn tensor_normalize<S, D>(
+    x: &ArrayBase<S, D>,
+    axis: Option<usize>,
+) -> Option<ndarray::Array<f64, D>>
+where
+    S: Data<Elem = f64>,
+    D: Dimension + RemoveAxis,
+{
     normalize(x, axis)
 }
 
-pub fn loglik_amplify(x: &ArrayD<f64>, axis: Option<usize>) -> Option<ArrayD<f64>> {
+pub fn loglik_amplify<S, D>(
+    x: &ArrayBase<S, D>,
+    axis: Option<usize>,
+) -> Option<ndarray::Array<f64, D>>
+where
+    S: Data<Elem = f64>,
+    D: Dimension + RemoveAxis,
+{
     let axis = axis.unwrap_or_else(|| x.ndim().saturating_sub(1));
     if axis >= x.ndim() {
         return None;
     }
-    let maxes = x
-        .map_axis(Axis(axis), |lane| {
-            lane.iter().copied().fold(f64::NEG_INFINITY, f64::max)
-        })
-        .insert_axis(Axis(axis));
-    Some(x - &maxes)
+    let maxes = x.map_axis(Axis(axis), |lane| {
+        lane.iter().copied().fold(f64::NEG_INFINITY, f64::max)
+    });
+    let mut out = x.to_owned();
+    for (mut lane, max_value) in out.lanes_mut(Axis(axis)).into_iter().zip(maxes.iter()) {
+        lane.mapv_inplace(|v| v - *max_value);
+    }
+    Some(out)
 }
 
 pub fn beta_entropy(

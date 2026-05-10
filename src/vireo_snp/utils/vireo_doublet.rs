@@ -1,13 +1,14 @@
 use crate::vireo_snp::utils::variant_select;
 use crate::vireo_snp::utils::vireo_base;
-use crate::PyValue;
-use ndarray::{Array1, Array2, Array3, Ix2, Ix3};
+use ndarray::{Array1, Array2, Array3};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
-use std::collections::BTreeMap;
 
 pub fn predict_doublet(
-    vobj: &BTreeMap<String, PyValue>,
+    gt_prob: &Array3<f64>,
+    beta_mu: &Array2<f64>,
+    beta_sum: &Array2<f64>,
+    id_prior: Option<&Array2<f64>>,
     ad: &Array2<f64>,
     dp: &Array2<f64>,
     _update_gt: bool,
@@ -17,33 +18,9 @@ pub fn predict_doublet(
     if ad.raw_dim() != dp.raw_dim() {
         return None;
     }
-    let gt_prob = match vobj.get("GT_prob") {
-        Some(PyValue::ArrayF64(x)) => match x.clone().into_dimensionality::<Ix3>() {
-            Ok(x) => x,
-            Err(_) => return None,
-        },
-        _ => return None,
-    };
-    let beta_mu = match vobj.get("beta_mu") {
-        Some(PyValue::ArrayF64(x)) => match x.clone().into_dimensionality::<Ix2>() {
-            Ok(x) => x,
-            Err(_) => return None,
-        },
-        _ => return None,
-    };
-    let beta_sum = match vobj.get("beta_sum") {
-        Some(PyValue::ArrayF64(x)) => match x.clone().into_dimensionality::<Ix2>() {
-            Ok(x) => x,
-            Err(_) => return None,
-        },
-        _ => return None,
-    };
-    let id_prior = match vobj.get("ID_prior") {
-        Some(PyValue::ArrayF64(x)) => match x.clone().into_dimensionality::<Ix2>() {
-            Ok(x) => x,
-            Err(_) => return None,
-        },
-        _ => Array2::from_elem(
+    let id_prior = match id_prior {
+        Some(x) => x.clone(),
+        None => Array2::from_elem(
             (ad.ncols(), gt_prob.shape()[1]),
             1.0 / gt_prob.shape()[1] as f64,
         ),
@@ -103,16 +80,13 @@ pub fn predict_doublet(
             .fold(f64::NEG_INFINITY, f64::max);
         log_lik_ratio.push(doublet - singlet);
     }
-    let log_lik_id_prior = &log_lik_id.into_dyn() + &id_prior_both.into_dyn().mapv(f64::ln);
+    let log_lik_id_prior = &log_lik_id + &id_prior_both.mapv(f64::ln);
     let id_prob_exp = match vireo_base::loglik_amplify(&log_lik_id_prior, None) {
         Some(x) => x.mapv(f64::exp),
         None => return None,
     };
     let id_prob_both = match vireo_base::normalize(&id_prob_exp, None) {
-        Some(x) => match x.into_dimensionality::<Ix2>() {
-            Ok(x) => x,
-            Err(_) => return None,
-        },
+        Some(x) => x,
         None => return None,
     };
     let mut prob_singlet = Array2::<f64>::zeros((ad.ncols(), n_donor));
@@ -187,11 +161,8 @@ pub fn add_doublet_GT(gt_prob: &Array3<f64>) -> Option<Array3<f64>> {
             }
         }
     }
-    let gt_prob2 = match vireo_base::normalize(&gt_prob2.into_dyn(), Some(2)) {
-        Some(x) => match x.into_dimensionality::<Ix3>() {
-            Ok(x) => x,
-            Err(_) => return None,
-        },
+    let gt_prob2 = match vireo_base::normalize(&gt_prob2, Some(2)) {
+        Some(x) => x,
         None => return None,
     };
     let mut out = Array3::<f64>::zeros((n_var, n_sample + n_sample_pair, n_gt + n_gt_pair));
@@ -319,7 +290,9 @@ pub fn _fit_EM_ambient(
 }
 
 pub fn predit_ambient(
-    vobj: &BTreeMap<String, PyValue>,
+    gt_prob: &Array3<f64>,
+    beta_mu: &Array2<f64>,
+    id_prob: &Array2<f64>,
     ad: &Array2<f64>,
     dp: &Array2<f64>,
     _nproc: usize,
@@ -328,27 +301,6 @@ pub fn predit_ambient(
     if ad.raw_dim() != dp.raw_dim() {
         return None;
     }
-    let gt_prob = match vobj.get("GT_prob") {
-        Some(PyValue::ArrayF64(x)) => match x.clone().into_dimensionality::<Ix3>() {
-            Ok(x) => x,
-            Err(_) => return None,
-        },
-        _ => return None,
-    };
-    let beta_mu = match vobj.get("beta_mu") {
-        Some(PyValue::ArrayF64(x)) => match x.clone().into_dimensionality::<Ix2>() {
-            Ok(x) => x,
-            Err(_) => return None,
-        },
-        _ => return None,
-    };
-    let id_prob = match vobj.get("ID_prob") {
-        Some(PyValue::ArrayF64(x)) => match x.clone().into_dimensionality::<Ix2>() {
-            Ok(x) => x,
-            Err(_) => return None,
-        },
-        _ => return None,
-    };
     let mut theta_mat = Array2::<f64>::zeros((gt_prob.shape()[0], gt_prob.shape()[1]));
     for v in 0..gt_prob.shape()[0] {
         for d in 0..gt_prob.shape()[1] {
