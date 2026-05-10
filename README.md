@@ -25,6 +25,7 @@ But:
 * **Do not trust the benchmarks on this page**. They are used to help evaluate the translation. If you want improved performance, you generally have to use this code as a library, and use the additional tricks it offers. We generally accept performance losses in order to reduce our dependency issues
 * **Check the original Github pages for information about the package**. This README is kept sparse on purpose. It is not meant to be the primary source of information
 * **If you are the author of the original code and wish to move to Rust, you can obtain ownership of this repository and crate**. Until then, our commitment is to offer an as-faithful-as-possible translation of a snapshot of your code. If we find serious bugs, we will report them to you. Otherwise we will just replicate them, to ensure comparability across studies that claim to use package XYZ v.666. Think of this like a fancy Ubuntu .deb-package of your software - that is how we treat it
+* **Seeded random initialization is deterministic in Rust, but reproducing NumPy's legacy RNG stream exactly is out of scope.** Seeded Python and Rust runs should not be expected to produce byte-identical random initializations.
 
 This blurb might be out of date. Go to [this page](https://github.com/henriksson-lab/rustification) for the latest information and further information about how we approach translation
 
