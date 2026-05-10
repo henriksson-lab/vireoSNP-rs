@@ -2,7 +2,8 @@
 
 Faithful Rust translation of `vireoSNP`, commit  `e3654633f7663732572c03c5dcf9fb00ec43b653`
 
-**ongoing translation**
+* 2026-05-10: Possibly working, near 4x faster due to differences in VCF parsing. May add support for more compact file formats in the future. Same output for 10M reads but need to check corner cases better
+
 
 ## This is an LLM-mediated faithful (hopefully) translation, not the original code! 
 
@@ -107,6 +108,45 @@ synth_pool \
   --noregionFile \
   --outDir pooled
 ```
+
+## Benchmarks
+
+The comparison below uses a 10M-scale real cellSNP output directory with 1,848,727 variants, 8 cells, 14,061,090 AD matrix entries, and 14,789,371 DP matrix entries. It was run on an Intel Xeon Gold 6138 CPU @ 2.00 GHz with:
+
+```sh
+cargo build --release --examples
+
+/usr/bin/time -v env \
+  BENCH_REPEATS=1 \
+  CELL_SNP_DIR=/path/to/cellSNP/output \
+  target/release/examples/speed_rust
+
+/usr/bin/time -v env \
+  BENCH_REPEATS=1 \
+  CELL_SNP_DIR=/path/to/cellSNP/output \
+  python3 benches/speed_python.py
+```
+
+Wall time by benchmark task:
+
+```text
+task               Rust       original Python   speedup
+load_cells_vcf      8.788 s    49.177 s          5.6x
+read_cellsnp        3.143 s     3.603 s          1.1x
+match_donor_vcf     2.457 s     6.181 s          2.5x
+vireo_fit_slice     0.000342 s  0.011 s         32.5x
+vireo_wrap_slice    0.000441 s  0.261 s        591.4x
+```
+
+Whole benchmark process:
+
+```text
+implementation     wall time    speed ratio    max RSS
+Rust               18.77 s      3.6x faster    6.24 GiB
+original Python    67.82 s      1.0x          8.45 GiB
+```
+
+These numbers are workload- and machine-specific. The benchmark scripts are included so the comparison can be rerun on local data.
 
 
 ## Citation
