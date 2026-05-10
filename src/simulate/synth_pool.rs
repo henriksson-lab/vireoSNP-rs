@@ -215,9 +215,7 @@ pub fn main() -> Option<()> {
     if noregion_file && region_file.is_some() {
         return None;
     }
-    let Some(out_dir) = out_dir else {
-        return None;
-    };
+    let out_dir = out_dir?;
     if fs::create_dir_all(&out_dir).is_err() {
         return None;
     }
@@ -246,18 +244,11 @@ pub fn main() -> Option<()> {
         );
     }
     let barcodes_in = if let Some(n_cell) = n_cell {
-        match sample_barcodes(barcodes_in, n_cell as usize, minor_sample, random_seed) {
-            Some(v) => v,
-            None => return None,
-        }
+        sample_barcodes(barcodes_in, n_cell as usize, minor_sample, random_seed)?
     } else {
         barcodes_in
     };
-    let barcodes_out = match pool_barcodes(&barcodes_in, &out_dir, doublet_rate, true, random_seed)
-    {
-        Some(v) => v,
-        None => return None,
-    };
+    let barcodes_out = pool_barcodes(&barcodes_in, &out_dir, doublet_rate, true, random_seed)?;
     if noregion_file {
         merge_bams(
             &sam_list,
@@ -267,19 +258,9 @@ pub fn main() -> Option<()> {
             "CB",
         );
     } else {
-        let Some(region_file) = region_file else {
-            return None;
-        };
-        let vcf = match crate::vireo_snp::utils::vcf_utils::load_VCF(
-            &region_file,
-            false,
-            false,
-            true,
-            None,
-        ) {
-            Some(m) => m,
-            None => return None,
-        };
+        let region_file = region_file?;
+        let vcf =
+            crate::vireo_snp::utils::vcf_utils::load_VCF(&region_file, false, false, true, None)?;
         let mut chroms = match vcf.fixed_info.get("CHROM") {
             Some(v) => v.clone(),
             _ => return None,
@@ -290,10 +271,7 @@ pub fn main() -> Option<()> {
         };
         if shuffle {
             let mut pairs: Vec<(String, i64)> = chroms.into_iter().zip(positions).collect();
-            pairs.shuffle(&mut StdRng::seed_from_u64(match random_seed {
-                Some(v) => v,
-                None => 0,
-            }));
+            pairs.shuffle(&mut StdRng::seed_from_u64(random_seed.unwrap_or_default()));
             let (c, p): (Vec<_>, Vec<_>) = pairs.into_iter().unzip();
             chroms = c;
             positions = p;

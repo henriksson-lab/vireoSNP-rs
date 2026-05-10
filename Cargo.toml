@@ -8,7 +8,20 @@ documentation = "https://docs.rs/vireosnp-rs"
 readme = "README.md"
 keywords = ["bioinformatics", "single-cell", "genomics", "demultiplexing", "vireo"]
 categories = ["science"]
-exclude = ["vireo/"]
+include = [
+    "/Cargo.toml",
+    "/LICENSE",
+    "/README.md",
+    "/STATUS.md",
+    "/benches/**",
+    "/bin/**",
+    "/ccc_mapping.toml",
+    "/examples/**",
+    "/src/**",
+    "/tests/**",
+    "/translation_order.csv",
+    "/translation_order_annotated.csv",
+]
 
 [features]
 default = []

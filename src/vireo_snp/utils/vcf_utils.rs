@@ -125,7 +125,7 @@ pub fn load_VCF(
     sparse: bool,
     format_list: Option<&[String]>,
 ) -> Option<VcfData> {
-    let file = match File::open(&path) {
+    let file = match File::open(path) {
         Ok(file) => file,
         Err(_) => return None,
     };
@@ -142,7 +142,7 @@ pub fn load_VCF(
     let mut obs_dat = Vec::new();
     let mut key_ids = Vec::<String>::new();
     if load_sample && sparse && !(path.ends_with(".gz") || path.ends_with(".bgz")) {
-        let mmap_file = match File::open(&path) {
+        let mmap_file = match File::open(path) {
             Ok(file) => file,
             Err(_) => return None,
         };
@@ -253,8 +253,7 @@ pub fn load_VCF(
         let n_threads = std::thread::available_parallelism()
             .map(|x| x.get())
             .unwrap_or(1)
-            .min(16)
-            .max(1);
+            .clamp(1, 16);
         let body_len = bytes.len().saturating_sub(data_start);
         let mut starts = Vec::with_capacity(n_threads + 1);
         starts.push(data_start);
@@ -477,7 +476,7 @@ pub fn load_VCF(
     }
     if !load_sample {
         if !(path.ends_with(".gz") || path.ends_with(".bgz")) {
-            let mmap_file = match File::open(&path) {
+            let mmap_file = match File::open(path) {
                 Ok(file) => file,
                 Err(_) => return None,
             };
@@ -692,45 +691,43 @@ pub fn load_VCF(
             } else {
                 comment_lines.push(line);
             }
-        } else {
-            if load_sample {
-                let list_val: Vec<String> =
-                    line.trim_end().split('\t').map(|s| s.to_string()).collect();
-                if biallelic_only && (list_val[3].len() > 1 || list_val[4].len() > 1) {
-                    continue;
-                }
-                obs_dat.push(list_val.iter().skip(8).cloned().collect());
-                for (i, key) in key_ids.iter().enumerate() {
-                    if let Some(values) = fixed_info.get_mut(key) {
-                        values.push(list_val[i].clone());
-                    }
-                }
-                var_ids.push(
-                    [0usize, 1, 3, 4]
-                        .iter()
-                        .map(|&i| list_val[i].clone())
-                        .collect::<Vec<_>>()
-                        .join("_"),
-                );
-            } else {
-                let line_trimmed = line.trim_end();
-                let list_val: Vec<&str> = line_trimmed.split('\t').take(key_ids.len()).collect();
-                if list_val.len() < key_ids.len() || list_val.len() < 5 {
-                    return None;
-                }
-                if biallelic_only && (list_val[3].len() > 1 || list_val[4].len() > 1) {
-                    continue;
-                }
-                for (i, key) in key_ids.iter().enumerate() {
-                    if let Some(values) = fixed_info.get_mut(key) {
-                        values.push(list_val[i].to_string());
-                    }
-                }
-                var_ids.push(format!(
-                    "{}_{}_{}_{}",
-                    list_val[0], list_val[1], list_val[3], list_val[4]
-                ));
+        } else if load_sample {
+            let list_val: Vec<String> =
+                line.trim_end().split('\t').map(|s| s.to_string()).collect();
+            if biallelic_only && (list_val[3].len() > 1 || list_val[4].len() > 1) {
+                continue;
             }
+            obs_dat.push(list_val.iter().skip(8).cloned().collect());
+            for (i, key) in key_ids.iter().enumerate() {
+                if let Some(values) = fixed_info.get_mut(key) {
+                    values.push(list_val[i].clone());
+                }
+            }
+            var_ids.push(
+                [0usize, 1, 3, 4]
+                    .iter()
+                    .map(|&i| list_val[i].clone())
+                    .collect::<Vec<_>>()
+                    .join("_"),
+            );
+        } else {
+            let line_trimmed = line.trim_end();
+            let list_val: Vec<&str> = line_trimmed.split('\t').take(key_ids.len()).collect();
+            if list_val.len() < key_ids.len() || list_val.len() < 5 {
+                return None;
+            }
+            if biallelic_only && (list_val[3].len() > 1 || list_val[4].len() > 1) {
+                continue;
+            }
+            for (i, key) in key_ids.iter().enumerate() {
+                if let Some(values) = fixed_info.get_mut(key) {
+                    values.push(list_val[i].to_string());
+                }
+            }
+            var_ids.push(format!(
+                "{}_{}_{}_{}",
+                list_val[0], list_val[1], list_val[3], list_val[4]
+            ));
         }
     }
     let mut rv = VcfData {
@@ -966,10 +963,7 @@ pub fn write_VCF(out_file: &str, vcf_dat: &VcfData, geno_tags: Option<&[String]>
     let geno_tags = geno_tags
         .map(|x| x.to_vec())
         .unwrap_or_else(|| vec!["GT".into(), "AD".into(), "DP".into(), "PL".into()]);
-    let out_file_use = out_file
-        .strip_suffix(".gz")
-        .unwrap_or(&out_file)
-        .to_string();
+    let out_file_use = out_file.strip_suffix(".gz").unwrap_or(out_file).to_string();
     let mut f = match File::create(&out_file_use) {
         Ok(f) => f,
         Err(_) => return None,
@@ -1033,15 +1027,11 @@ pub fn write_VCF(out_file: &str, vcf_dat: &VcfData, geno_tags: Option<&[String]>
                 Some(v) => v,
                 _ => return None,
             };
-            let Some(value) = values.get(i) else {
-                return None;
-            };
+            let value = values.get(i)?;
             line.push(value.clone());
         }
         if !geno_tags.is_empty() {
-            let Some(geno_info) = geno_info else {
-                return None;
-            };
+            let geno_info = geno_info?;
             line.push(geno_tags.join(":"));
             for s in 0..samples.len() {
                 let mut values = Vec::new();
@@ -1050,12 +1040,8 @@ pub fn write_VCF(out_file: &str, vcf_dat: &VcfData, geno_tags: Option<&[String]>
                         Some(v) => v,
                         _ => return None,
                     };
-                    let Some(row) = rows.get(i) else {
-                        return None;
-                    };
-                    let Some(value) = row.get(s) else {
-                        return None;
-                    };
+                    let row = rows.get(i)?;
+                    let value = row.get(s)?;
                     values.push(value.clone());
                 }
                 line.push(values.join(":"));
@@ -1203,14 +1189,8 @@ pub fn match_VCF_samples(
 ) -> Option<VcfSampleMatchResult> {
     let gt_tags1 = [gt_tag1.to_string()];
     let gt_tags2 = [gt_tag2.to_string()];
-    let vcf0 = match load_VCF(vcf_file1, true, true, false, Some(&gt_tags1)) {
-        Some(m) => m,
-        None => return None,
-    };
-    let vcf1 = match load_VCF(vcf_file2, true, true, false, Some(&gt_tags2)) {
-        Some(m) => m,
-        None => return None,
-    };
+    let vcf0 = load_VCF(vcf_file1, true, true, false, Some(&gt_tags1))?;
+    let vcf1 = load_VCF(vcf_file2, true, true, false, Some(&gt_tags2))?;
     let var0 = vcf0.variants.clone();
     let var1 = vcf1.variants.clone();
     let donor0 = vcf0.samples.clone();
@@ -1229,14 +1209,8 @@ pub fn match_VCF_samples(
         },
         _ => return None,
     };
-    let gpb0 = match parse_donor_GPb(&geno0, gt_tag1, 0.0) {
-        Some(x) => x,
-        None => return None,
-    };
-    let gpb1 = match parse_donor_GPb(&geno1, gt_tag2, 0.0) {
-        Some(x) => x,
-        None => return None,
-    };
+    let gpb0 = parse_donor_GPb(&geno0, gt_tag1, 0.0)?;
+    let gpb1 = parse_donor_GPb(&geno1, gt_tag2, 0.0)?;
     let pairs: Vec<(usize, usize)> = match_SNPs(&var1, &var0)
         .into_iter()
         .enumerate()

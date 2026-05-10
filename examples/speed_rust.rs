@@ -42,7 +42,7 @@ fn main() {
         .ok()
         .and_then(|x| x.parse().ok())
         .unwrap_or(10);
-    let fit_repeats = repeats.min(5).max(1);
+    let fit_repeats = repeats.clamp(1, 5);
     let mut stdout = std::io::stdout();
 
     let mut samples = Vec::new();

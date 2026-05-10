@@ -25,14 +25,8 @@ pub fn predict_doublet(
             1.0 / gt_prob.shape()[1] as f64,
         ),
     };
-    let gt_both = match add_doublet_GT(&gt_prob) {
-        Some(x) => x,
-        None => return None,
-    };
-    let (beta_mu_both, beta_sum_both) = match add_doublet_theta(&beta_mu, &beta_sum) {
-        Some(x) => x,
-        None => return None,
-    };
+    let gt_both = add_doublet_GT(gt_prob)?;
+    let (beta_mu_both, beta_sum_both) = add_doublet_theta(beta_mu, beta_sum)?;
     let n_donor = gt_prob.shape()[1];
     let n_doublet_pair = gt_both.shape()[1] - n_donor;
     let doublet_rate_prior = doublet_rate_prior.unwrap_or(0.5f64.min(ad.ncols() as f64 / 100000.0));
@@ -85,10 +79,7 @@ pub fn predict_doublet(
         Some(x) => x.mapv(f64::exp),
         None => return None,
     };
-    let id_prob_both = match vireo_base::normalize(&id_prob_exp, None) {
-        Some(x) => x,
-        None => return None,
-    };
+    let id_prob_both = vireo_base::normalize(&id_prob_exp, None)?;
     let mut prob_singlet = Array2::<f64>::zeros((ad.ncols(), n_donor));
     let mut prob_doublet = Array2::<f64>::zeros((ad.ncols(), n_doublet_pair));
     for i in 0..ad.ncols() {
@@ -161,10 +152,7 @@ pub fn add_doublet_GT(gt_prob: &Array3<f64>) -> Option<Array3<f64>> {
             }
         }
     }
-    let gt_prob2 = match vireo_base::normalize(&gt_prob2, Some(2)) {
-        Some(x) => x,
-        None => return None,
-    };
+    let gt_prob2 = vireo_base::normalize(&gt_prob2, Some(2))?;
     let mut out = Array3::<f64>::zeros((n_var, n_sample + n_sample_pair, n_gt + n_gt_pair));
     for v in 0..n_var {
         for s in 0..n_sample {
@@ -310,10 +298,7 @@ pub fn predit_ambient(
         }
     }
     let min_elbo_gain = min_elbo_gain.unwrap_or((ad.ncols() as f64).sqrt() / 3.0);
-    let elbo_gain = match variant_select::variant_ELBO_gain(&id_prob, &ad, &dp, 0.5) {
-        Some(x) => x,
-        None => return None,
-    };
+    let elbo_gain = variant_select::variant_ELBO_gain(id_prob, ad, dp, 0.5)?;
     let snp_idx: Vec<usize> = elbo_gain
         .iter()
         .enumerate()

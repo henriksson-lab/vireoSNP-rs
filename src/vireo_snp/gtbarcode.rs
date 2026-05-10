@@ -50,9 +50,7 @@ pub fn main() -> Option<()> {
         }
         i += 1;
     }
-    let Some(vcf_file) = vcf_file else {
-        return None;
-    };
+    let vcf_file = vcf_file?;
     let out_file = out_file.unwrap_or_else(|| {
         let parent = Path::new(&vcf_file)
             .parent()
@@ -64,10 +62,7 @@ pub fn main() -> Option<()> {
             return None;
         }
     }
-    let donor_vcf = match vcf_utils::load_VCF(&vcf_file, true, true, false, None) {
-        Some(m) => m,
-        None => return None,
-    };
+    let donor_vcf = vcf_utils::load_VCF(&vcf_file, true, true, false, None)?;
     let geno = match &donor_vcf.geno_info {
         Some(m) => match m.string_matrices.get(&geno_tag) {
             Some(v) => v.clone(),
@@ -75,10 +70,7 @@ pub fn main() -> Option<()> {
         },
         _ => return None,
     };
-    let donor_gpb = match vcf_utils::parse_donor_GPb(&geno, &geno_tag, 0.0) {
-        Some(x) => x,
-        None => return None,
-    };
+    let donor_gpb = vcf_utils::parse_donor_GPb(&geno, &geno_tag, 0.0)?;
     let var_ids = donor_vcf.variants.clone();
     let sample_ids = donor_vcf.samples.clone();
     let info = donor_vcf

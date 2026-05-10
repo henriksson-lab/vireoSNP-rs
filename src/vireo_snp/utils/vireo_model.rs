@@ -93,15 +93,9 @@ impl Vireo {
                 for v in id.iter_mut() {
                     *v = rng.gen::<f64>();
                 }
-                match vireo_base::normalize(&id, Some(1)) {
-                    Some(x) => x,
-                    None => return None,
-                }
+                vireo_base::normalize(&id, Some(1))?
             }
-            Some(x) => match vireo_base::normalize(&x, Some(1)) {
-                Some(x) => x,
-                None => return None,
-            },
+            Some(x) => vireo_base::normalize(&x, Some(1))?,
         };
         self.gt_prob = match gt_prob_init {
             None => {
@@ -109,15 +103,9 @@ impl Vireo {
                 for v in gt.iter_mut() {
                     *v = rng.gen::<f64>();
                 }
-                match vireo_base::normalize(&gt, Some(2)) {
-                    Some(x) => x,
-                    None => return None,
-                }
+                vireo_base::normalize(&gt, Some(2))?
             }
-            Some(x) => match vireo_base::normalize(&x, None) {
-                Some(x) => x,
-                None => return None,
-            },
+            Some(x) => vireo_base::normalize(&x, None)?,
         };
         Some(())
     }
@@ -151,10 +139,7 @@ impl Vireo {
         self.theta_s1_prior = &beta_mu_prior * &beta_sum_prior;
         self.theta_s2_prior = (&beta_mu_prior * -1.0 + 1.0) * &beta_sum_prior;
         self.id_prior = match id_prior {
-            Some(x) => match vireo_base::normalize(&x, Some(1)) {
-                Some(x) => x,
-                None => return None,
-            },
+            Some(x) => vireo_base::normalize(&x, Some(1))?,
             None => Array2::from_elem(
                 (self.id_prob.shape()[0], self.id_prob.shape()[1]),
                 1.0 / self.id_prob.shape()[1] as f64,
@@ -164,10 +149,7 @@ impl Vireo {
         self.gt_prior = match gt_prior {
             Some(mut x) => {
                 x.mapv_inplace(|v| v.max(min_gp).min(1.0 - min_gp));
-                match vireo_base::normalize(&x, Some(2)) {
-                    Some(x) => x,
-                    None => return None,
-                }
+                vireo_base::normalize(&x, Some(2))?
             }
             None => {
                 let n_gt = self.gt_prob.shape()[2];
@@ -189,17 +171,13 @@ impl Vireo {
     }
 
     pub fn digamma1_(&self) -> Option<Array3<f64>> {
-        match self.theta_s1() {
-            Some(x) => Some(x.mapv(digamma).insert_axis(Axis(1))),
-            None => None,
-        }
+        self.theta_s1()
+            .map(|x| x.mapv(digamma).insert_axis(Axis(1)))
     }
 
     pub fn digamma2_(&self) -> Option<Array3<f64>> {
-        match self.theta_s2() {
-            Some(x) => Some(x.mapv(digamma).insert_axis(Axis(1))),
-            None => None,
-        }
+        self.theta_s2()
+            .map(|x| x.mapv(digamma).insert_axis(Axis(1)))
     }
 
     pub fn digammas_(&self) -> Option<Array3<f64>> {
@@ -258,18 +236,9 @@ impl Vireo {
         }
         let bd = dp - ad;
         let gt_prob = self.gt_prob.clone();
-        let d1 = match self.digamma1_() {
-            Some(x) => x,
-            None => return None,
-        };
-        let d2 = match self.digamma2_() {
-            Some(x) => x,
-            None => return None,
-        };
-        let ds = match self.digammas_() {
-            Some(x) => x,
-            None => return None,
-        };
+        let d1 = self.digamma1_()?;
+        let d2 = self.digamma2_()?;
+        let ds = self.digammas_()?;
         let mut log_lik = Array2::<f64>::zeros((ad.ncols(), gt_prob.shape()[1]));
         for g in 0..gt_prob.shape()[2] {
             let mut weighted1 = Array2::<f64>::zeros((gt_prob.shape()[0], gt_prob.shape()[1]));
@@ -287,14 +256,8 @@ impl Vireo {
                 log_lik + ad.t().dot(&weighted1) + bd.t().dot(&weighted2) - dp.t().dot(&weighteds);
         }
         let log_lik_prior = &log_lik + &self.id_prior.mapv(f64::ln);
-        let amplified = match vireo_base::loglik_amplify(&log_lik_prior, None) {
-            Some(x) => x,
-            None => return None,
-        };
-        self.id_prob = match vireo_base::normalize(&amplified.mapv(f64::exp), None) {
-            Some(x) => x,
-            None => return None,
-        };
+        let amplified = vireo_base::loglik_amplify(&log_lik_prior, None)?;
+        self.id_prob = vireo_base::normalize(&amplified.mapv(f64::exp), None)?;
         Some(log_lik)
     }
 
@@ -307,18 +270,9 @@ impl Vireo {
         let s1_gt = ad.dot(&id_prob);
         let ss_gt = dp.dot(&id_prob);
         let s2_gt = &ss_gt - &s1_gt;
-        let d1 = match self.digamma1_() {
-            Some(x) => x,
-            None => return None,
-        };
-        let d2 = match self.digamma2_() {
-            Some(x) => x,
-            None => return None,
-        };
-        let ds = match self.digammas_() {
-            Some(x) => x,
-            None => return None,
-        };
+        let d1 = self.digamma1_()?;
+        let d2 = self.digamma2_()?;
+        let ds = self.digammas_()?;
         let mut log_lik = Array3::<f64>::zeros(gt_prior.raw_dim());
         for v in 0..gt_prior.shape()[0] {
             let theta_row = if d1.shape()[0] == 1 { 0 } else { v };
@@ -331,14 +285,8 @@ impl Vireo {
             }
         }
         let log_lik_prior = &log_lik + &gt_prior.mapv(f64::ln);
-        let amplified = match vireo_base::loglik_amplify(&log_lik_prior, None) {
-            Some(x) => x,
-            None => return None,
-        };
-        self.gt_prob = match vireo_base::normalize(&amplified.mapv(f64::exp), None) {
-            Some(x) => x,
-            None => return None,
-        };
+        let amplified = vireo_base::loglik_amplify(&log_lik_prior, None)?;
+        self.gt_prob = vireo_base::normalize(&amplified.mapv(f64::exp), None)?;
         Some(())
     }
 
@@ -358,14 +306,8 @@ impl Vireo {
             .filter(|(p, q)| **p > 0.0 && **q > 0.0)
             .map(|(p, q)| p * (p / q).ln())
             .sum();
-        let theta_s1 = match self.theta_s1() {
-            Some(x) => x,
-            None => return None,
-        };
-        let theta_s2 = match self.theta_s2() {
-            Some(x) => x,
-            None => return None,
-        };
+        let theta_s1 = self.theta_s1()?;
+        let theta_s2 = self.theta_s2()?;
         let mut x = Array2::<f64>::zeros((theta_s1.len(), 2));
         let mut xp = Array2::<f64>::zeros((theta_s1.len(), 2));
         for (i, (((a, b), pa), pb)) in theta_s1
@@ -432,7 +374,7 @@ impl Vireo {
         _nproc: usize,
     ) -> Option<()> {
         let epsilon_conv = epsilon_conv.unwrap_or(1e-2);
-        let mut elbo = match self._fit_VB(
+        let mut elbo = self._fit_VB(
             ad,
             dp,
             max_iter,
@@ -440,11 +382,8 @@ impl Vireo {
             epsilon_conv,
             delay_fit_theta,
             verbose,
-        ) {
-            Some(v) => v,
-            None => return None,
-        };
-        let binom_coeff = vireo_base::get_binom_coeff(&ad, &dp, 700.0)
+        )?;
+        let binom_coeff = vireo_base::get_binom_coeff(ad, dp, 700.0)
             .iter()
             .sum::<f64>();
         for v in &mut elbo {

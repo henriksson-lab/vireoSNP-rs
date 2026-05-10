@@ -429,13 +429,16 @@ impl VireoSnpBuilder {
                 return Err(VireoError::DonorOutputFailed(out_dir.clone()));
             }
         }
-        if out_dir.is_some() && learn_gt && !cell_dat.variants.is_empty() {
+        if let Some(out_dir) = out_dir
+            .as_ref()
+            .filter(|_| learn_gt && !cell_dat.variants.is_empty())
+        {
             let geno_info = vcf_utils::GenoINFO_maker(
                 &res.gt_prob,
                 &ad_arr.dot(&res.id_prob),
                 &dp_arr.dot(&res.id_prob),
             )
-            .ok_or_else(|| VireoError::DonorVcfOutputFailed(out_dir.clone().unwrap_or_default()))?;
+            .ok_or_else(|| VireoError::DonorVcfOutputFailed(out_dir.clone()))?;
             let out_dat = vcf_utils::VcfData {
                 variants: cell_dat.variants,
                 fixed_info: cell_dat.fixed_info,
@@ -448,7 +451,7 @@ impl VireoSnpBuilder {
                 }),
                 n_snp_tagged: Vec::new(),
             };
-            let out_vcf = format!("{}/GT_donors.vireo.vcf.gz", out_dir.as_ref().unwrap());
+            let out_vcf = format!("{out_dir}/GT_donors.vireo.vcf.gz");
             if vcf_utils::write_VCF(&out_vcf, &out_dat, None).is_none() {
                 return Err(VireoError::DonorVcfOutputFailed(out_vcf));
             }

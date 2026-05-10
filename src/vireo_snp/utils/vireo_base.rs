@@ -2,6 +2,8 @@ use ndarray::{Array1, Array2, Array3, ArrayBase, Axis, Data, Dimension, RemoveAx
 use statrs::function::beta::ln_beta;
 use statrs::function::gamma::{digamma, ln_gamma};
 
+type OptimalMatchResult = (Vec<usize>, Vec<usize>, Option<Array2<f64>>);
+
 pub fn get_binom_coeff<S1, S2, D>(
     ad: &ArrayBase<S1, D>,
     dp: &ArrayBase<S2, D>,
@@ -168,7 +170,7 @@ pub fn optimal_match(
     z: &Array2<f64>,
     axis: Option<usize>,
     return_delta: bool,
-) -> Option<(Vec<usize>, Vec<usize>, Option<Array2<f64>>)> {
+) -> Option<OptimalMatchResult> {
     let axis = axis.unwrap_or(1);
     if axis > 1 {
         return None;

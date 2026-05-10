@@ -53,9 +53,7 @@ pub fn vireo_wrap(
     if n_donor_use_base.is_none() {
         n_donor_use_base = gt_prior_arr.map(|x| x.shape()[1]);
     }
-    let Some(n_donor_base) = n_donor_use_base else {
-        return None;
-    };
+    let n_donor_base = n_donor_use_base?;
     if !learn_gt_bool && n_extra_donor > 0 {
         n_extra_donor = 0;
     }
@@ -76,44 +74,32 @@ pub fn vireo_wrap(
     for _ in 0..n_init {
         let mut model = Vireo::default();
         let gt_init = gt_prior_use.clone();
-        if model
-            .__init__(
-                ad_arr.ncols(),
-                ad_arr.nrows(),
-                n_donor_use,
-                n_gt_usize,
-                learn_gt_bool,
-                true,
-                ase_mode_bool,
-                fix_beta_sum_bool,
-                None,
-                None,
-                None,
-                gt_init.clone(),
-            )
-            .is_none()
-        {
-            return None;
-        }
-        if model.set_prior(gt_init, None, None, None, None).is_none() {
-            return None;
-        }
-        if model
-            .fit(
-                &ad_arr,
-                &dp_arr,
-                max_iter_init_usize,
-                5,
-                None,
-                delay_fit_theta_usize,
-                false,
-                None,
-                1,
-            )
-            .is_none()
-        {
-            return None;
-        }
+        model.__init__(
+            ad_arr.ncols(),
+            ad_arr.nrows(),
+            n_donor_use,
+            n_gt_usize,
+            learn_gt_bool,
+            true,
+            ase_mode_bool,
+            fix_beta_sum_bool,
+            None,
+            None,
+            None,
+            gt_init.clone(),
+        )?;
+        model.set_prior(gt_init, None, None, None, None)?;
+        model.fit(
+            ad_arr,
+            dp_arr,
+            max_iter_init_usize,
+            5,
+            None,
+            delay_fit_theta_usize,
+            false,
+            None,
+            1,
+        )?;
         models.push(model);
     }
     let elbo_all: Vec<f64> = models
@@ -128,67 +114,43 @@ pub fn vireo_wrap(
         .unwrap_or(0);
     let mut model = models.remove(best_idx);
     if n_extra_donor == 0 {
-        if model
-            .fit(&ad_arr, &dp_arr, 200, 5, None, 0, false, None, 1)
-            .is_none()
-        {
-            return None;
-        }
+        model.fit(ad_arr, dp_arr, 200, 5, None, 0, false, None, 1)?;
     } else {
         let gt_prob = model.gt_prob.clone();
         let id_prob_arr = model.id_prob.clone();
-        let id_prob = match vireo_base::donor_select(
-            &gt_prob,
-            &id_prob_arr,
-            n_donor_base,
-            extra_donor_mode_str,
-        ) {
-            Some(x) => x,
-            None => return None,
-        };
+        let id_prob =
+            vireo_base::donor_select(&gt_prob, &id_prob_arr, n_donor_base, extra_donor_mode_str)?;
         let mut next = Vireo::default();
         let beta_mu = Some(model.beta_mu.clone());
         let beta_sum = Some(model.beta_sum.clone());
         let id_prob = Some(id_prob);
         let gt_init = gt_prior_use.clone();
-        if next
-            .__init__(
-                ad_arr.ncols(),
-                ad_arr.nrows(),
-                n_donor_base,
-                n_gt_usize,
-                learn_gt_bool,
-                true,
-                ase_mode_bool,
-                fix_beta_sum_bool,
-                beta_mu,
-                beta_sum,
-                id_prob,
-                gt_init.clone(),
-            )
-            .is_none()
-        {
-            return None;
-        }
-        if next.set_prior(gt_init, None, None, None, None).is_none() {
-            return None;
-        }
-        if next
-            .fit(
-                &ad_arr,
-                &dp_arr,
-                200,
-                5,
-                None,
-                delay_fit_theta_usize,
-                false,
-                None,
-                1,
-            )
-            .is_none()
-        {
-            return None;
-        }
+        next.__init__(
+            ad_arr.ncols(),
+            ad_arr.nrows(),
+            n_donor_base,
+            n_gt_usize,
+            learn_gt_bool,
+            true,
+            ase_mode_bool,
+            fix_beta_sum_bool,
+            beta_mu,
+            beta_sum,
+            id_prob,
+            gt_init.clone(),
+        )?;
+        next.set_prior(gt_init, None, None, None, None)?;
+        next.fit(
+            ad_arr,
+            dp_arr,
+            200,
+            5,
+            None,
+            delay_fit_theta_usize,
+            false,
+            None,
+            1,
+        )?;
         model = next;
     }
     let (doublet_prob, id_prob, doublet_llr) = if check_doublet {

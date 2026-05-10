@@ -4,6 +4,8 @@ use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use statrs::function::gamma::digamma;
 
+type BestBinomMixture = (Array2<f64>, Array2<f64>, Array2<f64>, f64, Vec<f64>);
+
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct BinomMixtureVB {
     pub elbo_inits: Vec<f64>,
@@ -69,15 +71,9 @@ impl BinomMixtureVB {
                 for v in id.iter_mut() {
                     *v = rng.gen::<f64>();
                 }
-                match vireo_base::normalize(&id, Some(1)) {
-                    Some(x) => x,
-                    None => return None,
-                }
+                vireo_base::normalize(&id, Some(1))?
             }
-            Some(x) => match vireo_base::normalize(&x, Some(1)) {
-                Some(x) => x,
-                None => return None,
-            },
+            Some(x) => vireo_base::normalize(&x, Some(1))?,
         };
         self.elbo_iters.clear();
         Some(())
@@ -104,10 +100,7 @@ impl BinomMixtureVB {
         self.theta_s2_prior = (&beta_mu_prior * -1.0 + 1.0) * &beta_sum_prior;
         self.id_prior = match id_prior {
             Some(x) => x,
-            None => match vireo_base::normalize(&Array2::ones((n_cell, n_donor)), Some(1)) {
-                Some(x) => x,
-                None => return None,
-            },
+            None => vireo_base::normalize(&Array2::ones((n_cell, n_donor)), Some(1))?,
         };
         Some(())
     }
@@ -125,14 +118,8 @@ impl BinomMixtureVB {
             return None;
         }
         let bd = dp - ad;
-        let theta_s1 = match self.theta_s1() {
-            Some(x) => x,
-            None => return None,
-        };
-        let theta_s2 = match self.theta_s2() {
-            Some(x) => x,
-            None => return None,
-        };
+        let theta_s1 = self.theta_s1()?;
+        let theta_s2 = self.theta_s2()?;
         let dig1 = theta_s1.mapv(digamma);
         let dig2 = theta_s2.mapv(digamma);
         let digsum = (&theta_s1 + &theta_s2).mapv(digamma);
@@ -155,14 +142,8 @@ impl BinomMixtureVB {
 
     pub fn update_ID_prob(&mut self, log_lik: &Array2<f64>) -> Option<()> {
         let log_lik_prior = log_lik + &self.id_prior.mapv(f64::ln);
-        let amplified = match vireo_base::loglik_amplify(&log_lik_prior, Some(1)) {
-            Some(x) => x,
-            None => return None,
-        };
-        self.id_prob = match vireo_base::normalize(&amplified.mapv(f64::exp), Some(1)) {
-            Some(x) => x,
-            None => return None,
-        };
+        let amplified = vireo_base::loglik_amplify(&log_lik_prior, Some(1))?;
+        self.id_prob = vireo_base::normalize(&amplified.mapv(f64::exp), Some(1))?;
         Some(())
     }
 
@@ -174,14 +155,8 @@ impl BinomMixtureVB {
                 kl_id += p * (p / q).ln();
             }
         }
-        let theta_s1 = match self.theta_s1() {
-            Some(x) => x,
-            None => return None,
-        };
-        let theta_s2 = match self.theta_s2() {
-            Some(x) => x,
-            None => return None,
-        };
+        let theta_s1 = self.theta_s1()?;
+        let theta_s2 = self.theta_s2()?;
         let mut x = Array2::<f64>::zeros((theta_s1.len(), 2));
         let mut xp = Array2::<f64>::zeros((theta_s1.len(), 2));
         for (i, (((a, b), pa), pb)) in theta_s1
@@ -245,7 +220,7 @@ impl BinomMixtureVB {
             .iter()
             .sum::<f64>();
         let mut elbo_inits = Vec::new();
-        let mut best: Option<(Array2<f64>, Array2<f64>, Array2<f64>, f64, Vec<f64>)> = None;
+        let mut best: Option<BestBinomMixture> = None;
         for i in 0..n_init {
             let beta_mu_init = self.beta_mu_init.clone();
             let beta_sum_init = self.beta_sum_init.clone();

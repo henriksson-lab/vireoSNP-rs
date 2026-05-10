@@ -1,3 +1,31 @@
+ignore_rust = [
+  "fmt",
+  "default",
+  "new",
+  "cell_data",
+  "donor_file",
+  "with_donors",
+  "n_donor",
+  "infer_donors",
+  "out_dir",
+  "geno_tag",
+  "genotype_tag",
+  "no_doublet",
+  "doublets",
+  "learn_genotypes",
+  "n_init",
+  "extra_donor",
+  "extra_donor_mode",
+  "force_learn_gt",
+  "ase_mode",
+  "check_ambient",
+  "rand_seed",
+  "seed",
+  "write_outputs",
+  "run",
+  "fit",
+]
+
 [[entries]]
 rust = "show_progress"
 rust_path = "src/simulate/synth_pool.rs"

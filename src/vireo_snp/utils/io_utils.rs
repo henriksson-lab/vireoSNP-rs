@@ -177,8 +177,7 @@ pub fn read_cellSNP(dir_name: &str, layers: Option<&[String]>) -> Option<CellDat
                 let n_threads = std::thread::available_parallelism()
                     .map(|x| x.get())
                     .unwrap_or(1)
-                    .min(16)
-                    .max(1);
+                    .clamp(1, 16);
                 let body_len = len.saturating_sub(body_start);
                 let mut starts = Vec::with_capacity(n_threads + 1);
                 starts.push(body_start);
@@ -333,8 +332,8 @@ pub fn read_cellSNP(dir_name: &str, layers: Option<&[String]>) -> Option<CellDat
                 let mut chunk_offsets = vec![vec![0usize; cols]; n_threads];
                 let mut next_offsets = indptr[..cols].to_vec();
                 for t in 0..n_threads {
+                    chunk_offsets[t][..cols].copy_from_slice(&next_offsets[..cols]);
                     for col in 0..cols {
-                        chunk_offsets[t][col] = next_offsets[col];
                         next_offsets[col] += chunk_col_counts[t][col];
                     }
                 }
@@ -505,10 +504,7 @@ pub fn read_vartrix(
             entries.push((row, col, val));
         }
     }
-    let (rows, cols) = match dims {
-        Some(v) => v,
-        None => return None,
-    };
+    let (rows, cols) = dims?;
     let mut ad = Array2::<f64>::zeros((rows, cols));
     for (row, col, val) in entries {
         ad[[row, col]] = val;
@@ -557,10 +553,7 @@ pub fn read_vartrix(
             entries.push((row, col, val));
         }
     }
-    let (ref_rows, ref_cols) = match dims {
-        Some(v) => v,
-        None => return None,
-    };
+    let (ref_rows, ref_cols) = dims?;
     if ref_rows != rows || ref_cols != cols {
         return None;
     }
