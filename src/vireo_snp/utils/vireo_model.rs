@@ -1,9 +1,22 @@
+//! Vireo model: Variational Inference for reconstruction of ensemble origin.
+//!
+//! The prior can be set via [`Vireo::set_prior`] before fitting the model.
+
 use crate::vireo_snp::utils::vireo_base;
 use ndarray::{Array2, Array3, Axis};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use statrs::function::gamma::digamma;
 
+/// Vireo model state: variational inference for reconstructing donor-of-origin
+/// assignments from single-cell allele count data.
+///
+/// Key fields:
+/// - `beta_mu`, `beta_sum`: Beta mean and concentration parameters of theta's posterior,
+///   shape `(1, n_gt)` or `(n_var, n_gt)` depending on ASE mode.
+/// - `id_prob`: Posterior cell assignment probability to each donor, shape `(n_cell, n_donor)`.
+/// - `gt_prob`: Posterior genotype probability per variant per donor,
+///   shape `(n_var, n_donor, n_gt)`.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Vireo {
     pub ase_mode: bool,
@@ -27,6 +40,23 @@ pub struct Vireo {
 }
 
 impl Vireo {
+    /// Initialise a Vireo model instance.
+    ///
+    /// Multiple initializations are highly recommended to avoid local optima.
+    ///
+    /// # Arguments
+    /// * `n_cell` - Number of cells.
+    /// * `n_var` - Number of variants.
+    /// * `n_donor` - Number of donors.
+    /// * `n_gt` - Number of genotype categories.
+    /// * `learn_gt` - Whether to update `gt_prob`; otherwise the initial value is used.
+    /// * `learn_theta` - Whether to update theta's posterior parameters.
+    /// * `ase_mode` - Whether to set the allelic ratio `theta` to be variant specific.
+    /// * `fix_beta_sum` - Whether to fix the concentration parameter of theta's posterior.
+    /// * `beta_mu_init` - Optional initial value of `beta_mu`.
+    /// * `beta_sum_init` - Optional initial value of `beta_sum`.
+    /// * `id_prob_init` - Optional initial value of `id_prob`.
+    /// * `gt_prob_init` - Optional initial value of `gt_prob`.
     pub fn __init__(
         &mut self,
         n_cell: usize,
@@ -55,15 +85,23 @@ impl Vireo {
         self.set_prior(None, None, None, None, None)
     }
 
+    /// Builder-style setter for the RNG seed used during random initialisation.
     pub fn with_rng_seed(mut self, seed: u64) -> Self {
         self.rng_seed = seed;
         self
     }
 
+    /// Set the RNG seed used during random initialisation.
     pub fn set_rng_seed(&mut self, seed: u64) {
         self.rng_seed = seed;
     }
 
+    /// Set initial values for `beta_mu`, `beta_sum`, `id_prob`, and `gt_prob`.
+    ///
+    /// When an initialisation argument is `None`, a default is used:
+    /// `beta_mu` is set to a linear ramp from 0.01 to 0.99 across genotype categories,
+    /// `beta_sum` is filled with 50, while `id_prob` and `gt_prob` are drawn from
+    /// the seeded RNG and row-normalised.
     pub fn set_initial(
         &mut self,
         beta_mu_init: Option<Array2<f64>>,
@@ -120,6 +158,11 @@ impl Vireo {
         Some(())
     }
 
+    /// Set priors for key variables: theta, `gt_prob`, and `id_prob`.
+    ///
+    /// The priors are in the same shape as their corresponding variables.
+    /// `min_gp` (default `0.00001`) clamps the minimum (and `1 - min_gp` the maximum)
+    /// genotype probability in the genotype prior.
     pub fn set_prior(
         &mut self,
         gt_prior: Option<Array3<f64>>,
@@ -172,24 +215,29 @@ impl Vireo {
         Some(())
     }
 
+    /// Beta concentration1 parameter for theta's posterior (`beta_mu * beta_sum`).
     pub fn theta_s1(&self) -> Option<Array2<f64>> {
         Some(&self.beta_mu * &self.beta_sum)
     }
 
+    /// Beta concentration2 parameter for theta's posterior (`(1 - beta_mu) * beta_sum`).
     pub fn theta_s2(&self) -> Option<Array2<f64>> {
         Some((&self.beta_mu * -1.0 + 1.0) * &self.beta_sum)
     }
 
+    /// Digamma of the Beta concentration1 parameter, with an extra axis inserted at position 1.
     pub fn digamma1_(&self) -> Option<Array3<f64>> {
         self.theta_s1()
             .map(|x| x.mapv(digamma).insert_axis(Axis(1)))
     }
 
+    /// Digamma of the Beta concentration2 parameter, with an extra axis inserted at position 1.
     pub fn digamma2_(&self) -> Option<Array3<f64>> {
         self.theta_s2()
             .map(|x| x.mapv(digamma).insert_axis(Axis(1)))
     }
 
+    /// Digamma of the Beta concentration sum (`theta_s1 + theta_s2`), with an extra axis at position 1.
     pub fn digammas_(&self) -> Option<Array3<f64>> {
         match (self.theta_s1(), self.theta_s2()) {
             (Some(a), Some(b)) => Some((&a + &b).mapv(digamma).insert_axis(Axis(1))),
@@ -197,6 +245,9 @@ impl Vireo {
         }
     }
 
+    /// Coordinate-ascent update for theta's posterior parameters (`beta_mu`, `beta_sum`).
+    ///
+    /// `ad` carries alternative-allele counts and `dp` total depths; they must share shape.
     pub fn update_theta_size(&mut self, ad: &Array2<f64>, dp: &Array2<f64>) -> Option<()> {
         if ad.raw_dim() != dp.raw_dim() {
             return None;
@@ -240,6 +291,9 @@ impl Vireo {
         Some(())
     }
 
+    /// Coordinate-ascent update for the cell-to-donor assignment probability `id_prob`.
+    ///
+    /// Returns the per-cell, per-donor log-likelihood matrix used in the update.
     pub fn update_ID_prob(&mut self, ad: &Array2<f64>, dp: &Array2<f64>) -> Option<Array2<f64>> {
         if ad.raw_dim() != dp.raw_dim() {
             return None;
@@ -271,6 +325,7 @@ impl Vireo {
         Some(log_lik)
     }
 
+    /// Coordinate-ascent update for the per-variant per-donor genotype probability `gt_prob`.
     pub fn update_GT_prob(&mut self, ad: &Array2<f64>, dp: &Array2<f64>) -> Option<()> {
         if ad.raw_dim() != dp.raw_dim() {
             return None;
@@ -300,6 +355,10 @@ impl Vireo {
         Some(())
     }
 
+    /// Compute the variational evidence lower bound (ELBO) with the current parameters.
+    ///
+    /// `log_lik_id` is the per-cell, per-donor log-likelihood matrix produced by
+    /// [`Vireo::update_ID_prob`].
     pub fn get_ELBO(&self, log_lik_id: &Array2<f64>) -> Option<f64> {
         let lb_p = (log_lik_id * &self.id_prob).sum();
         let kl_id: f64 = self
@@ -339,6 +398,12 @@ impl Vireo {
         Some(lb_p - kl_id - kl_gt - kl_theta)
     }
 
+    /// Run coordinate-ascent variational Bayes for at most `max_iter` iterations.
+    ///
+    /// Stops early once the ELBO change between successive iterations falls below
+    /// `epsilon_conv` (after at least `min_iter` iterations). `delay_fit_theta`
+    /// suppresses theta updates for the first N iterations. Returns the ELBO trace
+    /// (one entry per iteration actually run).
     pub fn _fit_VB(
         &mut self,
         ad: &Array2<f64>,
@@ -371,6 +436,18 @@ impl Vireo {
         Some(elbo[..=last].to_vec())
     }
 
+    /// Fit the Vireo model with coordinate ascent and append the resulting ELBO
+    /// trace (corrected with the binomial coefficient term) to `self.elbo_`.
+    ///
+    /// # Arguments
+    /// * `ad` - Count matrix for the alternative allele (`n_var` x `n_cell`).
+    /// * `dp` - Count matrix for total depths (alternative + reference).
+    /// * `max_iter` - Maximum number of variational iterations.
+    /// * `min_iter` - Minimum number of iterations before convergence checks fire.
+    /// * `epsilon_conv` - Convergence threshold on the ELBO increment (default `1e-2`).
+    /// * `delay_fit_theta` - Number of steps to delay updating theta. Useful when there
+    ///   is a strong prior on the allelic ratio.
+    /// * `verbose` - Whether to print log information.
     pub fn fit(
         &mut self,
         ad: &Array2<f64>,

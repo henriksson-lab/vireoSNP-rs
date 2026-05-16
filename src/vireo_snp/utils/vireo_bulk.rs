@@ -1,8 +1,15 @@
+//! Identification of donor abundance in a multiplexed bulk sample.
+
 use ndarray::{Array1, Array3};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use statrs::distribution::{ChiSquared, ContinuousCDF};
 
+/// Estimator of donor abundance in a multiplexed bulk sample.
+///
+/// Inferred variables:
+/// - `psi`: fractional abundance of each donor in the mixture (length `n_donor`).
+/// - `theta`: alternative allele rate per genotype category (length `n_gt`).
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct VireoBulk {
     pub log_lik: f64,
@@ -14,6 +21,12 @@ pub struct VireoBulk {
 }
 
 impl VireoBulk {
+    /// Initialise the model with `n_donor` donors and `n_gt` genotype categories.
+    ///
+    /// `psi` is drawn from a Dirichlet-like distribution unless `psi_init` is provided.
+    /// `theta` defaults to `[0.01, 0.5, 0.99]` when `n_gt == 3`, otherwise it is
+    /// randomly initialised, unless `theta_init` is provided. Returns `None` if
+    /// `psi_init` or `theta_init` have lengths that do not match `n_donor` / `n_gt`.
     pub fn __init__(
         &mut self,
         n_donor: usize,
@@ -50,6 +63,21 @@ impl VireoBulk {
         Some(())
     }
 
+    /// Fit `psi` and `theta` using the Expectation-Maximisation algorithm.
+    ///
+    /// # Arguments
+    /// * `ad` - per-variant alternative allele counts (length `n_variant`).
+    /// * `dp` - per-variant total depths over both alleles (length `n_variant`).
+    /// * `gt_prob` - per-genotype probability tensor of shape
+    ///   `(n_variant, n_donor, n_gt)`.
+    /// * `max_iter` / `min_iter` - upper and lower bounds on EM iterations.
+    /// * `epsilon_conv` - convergence threshold on the log-likelihood increment.
+    /// * `learn_theta` - if `true`, also update `theta`; otherwise keep the
+    ///   initial value.
+    /// * `delay_fit_theta` - number of initial iterations during which `theta`
+    ///   is not updated.
+    ///
+    /// Returns `None` if input shapes are inconsistent.
     pub fn fit(
         &mut self,
         ad: &Array1<f64>,
@@ -149,6 +177,10 @@ impl VireoBulk {
         Some(())
     }
 
+    /// Likelihood-ratio test of the fitted `psi` against a null hypothesis.
+    ///
+    /// Delegates to [`LikRatio_test`] using the model's current `psi` and
+    /// `theta`. `ad`, `dp`, and `gt_prob` should match those used in [`fit`].
     pub fn LR_test(
         &self,
         psi_null: &Array1<f64>,
@@ -161,6 +193,24 @@ impl VireoBulk {
     }
 }
 
+/// Likelihood-ratio test for a `psi` vector against a null hypothesis.
+///
+/// `ad`, `dp`, and `gt_prob` should be the same arrays used to fit the model.
+///
+/// # Arguments
+/// * `psi` - alternative-hypothesis donor abundances (length `n_donor`).
+/// * `psi_null` - null-hypothesis donor abundances (length `n_donor`).
+/// * `ad` - alternative-allele counts per variant.
+/// * `dp` - total depths per variant.
+/// * `gt_prob` - genotype probability tensor of shape
+///   `(n_variant, n_donor, n_gt)`.
+/// * `theta` - alternative-allele rate per genotype category.
+/// * `log` - if `true`, return the p-value on the log scale.
+///
+/// # Returns
+/// `Some((statistic, pvalue))` with the chi-square statistic and single-tailed
+/// p-value, or `None` if input shapes are inconsistent or the chi-square
+/// distribution cannot be constructed.
 pub fn LikRatio_test(
     psi: &Array1<f64>,
     psi_null: &Array1<f64>,

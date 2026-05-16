@@ -1,3 +1,5 @@
+//! Doublet prediction routines for the Vireo SNP model.
+
 use crate::vireo_snp::utils::variant_select;
 use crate::vireo_snp::utils::vireo_base;
 use ndarray::{Array1, Array2, Array3};
@@ -6,6 +8,28 @@ use rand::{Rng, SeedableRng};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
+/// Predict doublets given a fitted Vireo model.
+///
+/// # Arguments
+/// * `gt_prob` - Genotype probabilities of shape `(n_var, n_donor, n_gt)`.
+/// * `beta_mu`, `beta_sum` - Beta-distribution parameters for theta.
+/// * `id_prior` - Optional per-cell prior over singlet assignments
+///   `(n_cell, n_donor)`; defaults to a uniform prior.
+/// * `ad` - Alternative-allele counts `(n_var, n_cell)`.
+/// * `dp` - Total depth counts (alt + ref) `(n_var, n_cell)`.
+/// * `_update_gt` - Whether to update `GT_prob` after removing doublets
+///   (currently unused in this port).
+/// * `_update_id` - Whether to update `ID_prob` after removing doublets
+///   (currently unused in this port).
+/// * `doublet_rate_prior` - Prior probability that a cell is a doublet;
+///   defaults to `min(0.5, n_cell / 100000)`.
+///
+/// # Returns
+/// `Some((prob_doublet, prob_singlet, log_lik_ratio))` where `prob_doublet`
+/// has shape `(n_cell, n_donor * (n_donor - 1) / 2)`, `prob_singlet` has
+/// shape `(n_cell, n_donor)`, and `log_lik_ratio` contains per-cell
+/// doublet-vs-singlet log-likelihood ratios. Returns `None` on shape
+/// mismatch or downstream failure.
 pub fn predict_doublet(
     gt_prob: &Array3<f64>,
     beta_mu: &Array2<f64>,
@@ -95,6 +119,12 @@ pub fn predict_doublet(
     Some((prob_doublet, prob_singlet, log_lik_ratio))
 }
 
+/// Compute beta parameters for doublet genotypes (e.g. `GT=0&1`, `GT=0&2`,
+/// `GT=1&2`) by averaging the corresponding `beta_mu` values and taking the
+/// geometric mean of the `beta_sum` values.
+///
+/// Returns the original columns followed by one column per donor pair, or
+/// `None` if the two input matrices have mismatched shapes.
 pub fn add_doublet_theta(
     beta_mu: &Array2<f64>,
     beta_sum: &Array2<f64>,
@@ -124,6 +154,13 @@ pub fn add_doublet_theta(
     Some((mu_out, sum_out))
 }
 
+/// Augment a genotype-probability tensor with doublet genotypes by
+/// summarising pair probabilities.
+///
+/// For each pair of donors the function adds entries for combined
+/// genotypes (e.g. five categories `0, 1, 2, 1.5, 2.5` when the original
+/// genotype space is `{0, 1, 2}`). The returned tensor has shape
+/// `(n_var, n_sample + n_sample_pair, n_gt + n_gt_pair)`.
 pub fn add_doublet_GT(gt_prob: &Array3<f64>) -> Option<Array3<f64>> {
     let n_var = gt_prob.shape()[0];
     let n_sample = gt_prob.shape()[1];
@@ -171,6 +208,13 @@ pub fn add_doublet_GT(gt_prob: &Array3<f64>) -> Option<Array3<f64>> {
     Some(out)
 }
 
+/// Estimate ambient RNA abundance for a single cell using an EM
+/// algorithm.
+///
+/// Returns `(psi, var_crbound, log_lik_ratio)` where `psi` is the donor
+/// mixture estimate, `var_crbound` is the Cramér-Rao lower bound on its
+/// variance (or `NaN`s when `hessian` is false), and `log_lik_ratio` is
+/// the log-likelihood ratio against the best single-donor null model.
 pub fn _fit_EM_ambient(
     ad: &Array1<f64>,
     dp: &Array1<f64>,
@@ -279,6 +323,16 @@ pub fn _fit_EM_ambient(
     Some((psi, var_crbound, log_lik_ratio))
 }
 
+/// Predict the fraction of ambient-RNA contamination per cell.
+///
+/// Selects donor-informative variants using
+/// [`variant_select::variant_ELBO_gain`] (threshold defaulting to
+/// `sqrt(n_cell) / 3`) and then fits [`_fit_EM_ambient`] for each cell,
+/// optionally in parallel when the `parallel` feature is enabled and
+/// `nproc > 1`.
+///
+/// Returns `(psi_mat, psi_var, psi_loglik)` stacked over cells. Still
+/// under development in the upstream Python implementation.
 pub fn predit_ambient(
     gt_prob: &Array3<f64>,
     beta_mu: &Array2<f64>,

@@ -4,8 +4,20 @@ use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use statrs::function::gamma::digamma;
 
+/// Snapshot of the best initialization tried during [`BinomMixtureVB::fit`]:
+/// `(id_prob, beta_mu, beta_sum, elbo, elbo_iters)`.
 type BestBinomMixture = (Array2<f64>, Array2<f64>, Array2<f64>, f64, Vec<f64>);
 
+/// Binomial mixture model fitted with variational Bayes inference.
+///
+/// Priors can be set via [`BinomMixtureVB::set_prior`] before fitting.
+///
+/// Key fields:
+/// - `beta_mu` (`n_var` x `n_donor`): beta mean parameter of theta's posterior.
+/// - `beta_sum` (`n_var` x `n_donor`): beta concentration parameter of theta's
+///   posterior.
+/// - `id_prob` (`n_cell` x `n_donor`): posterior cell assignment probability
+///   to each donor.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct BinomMixtureVB {
     pub elbo_inits: Vec<f64>,
@@ -27,6 +39,23 @@ pub struct BinomMixtureVB {
 }
 
 impl BinomMixtureVB {
+    /// Initialise the Vireo model.
+    ///
+    /// Multiple initializations are highly recommended to avoid local optima.
+    ///
+    /// # Arguments
+    ///
+    /// * `n_cell` - Number of cells.
+    /// * `n_var` - Number of variants.
+    /// * `n_donor` - Number of donors.
+    /// * `fix_beta_sum` - Whether to fix the concentration parameter of
+    ///   theta's posterior.
+    /// * `beta_mu_init` - Optional initial value of `beta_mu`, the mean
+    ///   parameter of theta (`n_var` x `n_donor`).
+    /// * `beta_sum_init` - Optional initial value of `beta_sum`, the
+    ///   concentration parameter of theta (`n_var` x `n_donor`).
+    /// * `id_prob_init` - Optional initial value of `id_prob`, the cell
+    ///   assignment probability to each donor (`n_cell` x `n_donor`).
     pub fn __init__(
         &mut self,
         n_cell: usize,
@@ -48,6 +77,12 @@ impl BinomMixtureVB {
         self.set_initial(beta_mu_init, beta_sum_init, id_prob_init)
     }
 
+    /// (Re-)initialise the key variational parameters.
+    ///
+    /// Any of `beta_mu`, `beta_sum`, or `id_prob` left as `None` is set to a
+    /// default: `beta_mu` to 0.5, `beta_sum` to 30.0, and `id_prob` to a
+    /// row-normalized random matrix seeded from `self.rng_seed`. The recorded
+    /// per-iteration ELBO history is cleared.
     pub fn set_initial(
         &mut self,
         beta_mu_init: Option<Array2<f64>>,
@@ -80,6 +115,12 @@ impl BinomMixtureVB {
         Some(())
     }
 
+    /// Set priors for the key variables theta and `id_prob`.
+    ///
+    /// The priors share the shape of the variables they constrain. Defaults
+    /// used when an argument is `None`: `beta_mu_prior` = 0.5,
+    /// `beta_sum_prior` = 2.0, and `id_prior` = a row-normalized matrix of
+    /// ones.
     pub fn set_prior(
         &mut self,
         id_prior: Option<Array2<f64>>,
@@ -106,14 +147,22 @@ impl BinomMixtureVB {
         Some(())
     }
 
+    /// First beta concentration parameter of the theta posterior
+    /// (`beta_mu * beta_sum`).
     pub fn theta_s1(&self) -> Option<Array2<f64>> {
         Some(&self.beta_mu * &self.beta_sum)
     }
 
+    /// Second beta concentration parameter of the theta posterior
+    /// (`(1 - beta_mu) * beta_sum`).
     pub fn theta_s2(&self) -> Option<Array2<f64>> {
         Some((&self.beta_mu * -1.0 + 1.0) * &self.beta_sum)
     }
 
+    /// Compute the expectation of the log-likelihood
+    /// `E_theta[P(AD | DP, theta, Z)]` as an `n_cell` x `n_donor` matrix.
+    ///
+    /// Returns `None` if `ad` and `dp` do not have matching shapes.
     pub fn get_E_logLik(&self, ad: &Array2<f64>, dp: &Array2<f64>) -> Option<Array2<f64>> {
         if ad.raw_dim() != dp.raw_dim() {
             return None;
@@ -127,6 +176,11 @@ impl BinomMixtureVB {
         Some(ad.t().dot(&dig1) + bd.t().dot(&dig2) - dp.t().dot(&digsum))
     }
 
+    /// Coordinate-ascent update of the theta posterior parameters.
+    ///
+    /// Updates `beta_mu` in place, and `beta_sum` as well unless
+    /// `fix_beta_sum` is set. Returns `None` when `ad` and `dp` have
+    /// mismatched shapes.
     pub fn update_theta_size(&mut self, ad: &Array2<f64>, dp: &Array2<f64>) -> Option<()> {
         if ad.raw_dim() != dp.raw_dim() {
             return None;
@@ -141,6 +195,8 @@ impl BinomMixtureVB {
         Some(())
     }
 
+    /// Coordinate-ascent update of the cell-to-donor assignment probability
+    /// `id_prob` from a precomputed expected log-likelihood matrix.
     pub fn update_ID_prob(&mut self, log_lik: &Array2<f64>) -> Option<()> {
         let log_lik_prior = log_lik + &self.id_prior.mapv(f64::ln);
         let amplified = vireo_base::loglik_amplify(&log_lik_prior, Some(1))?;
@@ -148,6 +204,13 @@ impl BinomMixtureVB {
         Some(())
     }
 
+    /// Compute the variational evidence lower bound for the current
+    /// parameters.
+    ///
+    /// # Arguments
+    ///
+    /// * `log_lik` - `n_cell` x `n_donor` matrix, the expected log-likelihood
+    ///   produced by [`BinomMixtureVB::get_E_logLik`].
     pub fn get_ELBO(&self, log_lik: &Array2<f64>) -> Option<f64> {
         let lb_p = (log_lik * &self.id_prob).sum();
         let mut kl_id = 0.0;
@@ -179,6 +242,12 @@ impl BinomMixtureVB {
         Some(lb_p - kl_id - kl_theta)
     }
 
+    /// Fit the Vireo model with coordinate-ascent variational inference.
+    ///
+    /// Iterates the theta-size, ID-probability and ELBO updates up to
+    /// `max_iter` times, exiting early after `min_iter` iterations once the
+    /// ELBO improvement falls below `epsilon_conv`. The per-iteration ELBO
+    /// values are appended to `self.elbo_iters`.
     pub fn _fit_BV(
         &mut self,
         ad: &Array2<f64>,
@@ -207,6 +276,24 @@ impl BinomMixtureVB {
         Some(())
     }
 
+    /// Fit the variational Bayes model with multiple random initializations.
+    ///
+    /// Runs `n_init` short fits (up to `max_iter_pre` iterations each, or 100
+    /// when `None`), keeps the parameters of the best initialization by ELBO,
+    /// then runs a final fit for up to `max_iter` iterations. The binomial
+    /// coefficient constant is added to the ELBO trajectories at the end.
+    ///
+    /// # Arguments
+    ///
+    /// * `ad_arr` - Count matrix for the alternative allele (`n_var` x
+    ///   `n_cell`).
+    /// * `dp_arr` - Count matrix for depth (alt + ref alleles), same shape
+    ///   as `ad_arr`.
+    /// * `n_init` - Number of random initializations to try.
+    /// * `max_iter` - Maximum iterations for the final fit.
+    /// * `max_iter_pre` - Maximum iterations for each preliminary fit.
+    /// * `random_seed` - Base seed; the i-th initialization uses
+    ///   `random_seed + i`.
     pub fn fit(
         &mut self,
         ad_arr: &Array2<f64>,

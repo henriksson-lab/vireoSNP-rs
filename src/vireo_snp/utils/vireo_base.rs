@@ -2,8 +2,13 @@ use ndarray::{Array1, Array2, Array3, ArrayBase, Axis, Data, Dimension, RemoveAx
 use statrs::function::beta::ln_beta;
 use statrs::function::gamma::{digamma, ln_gamma};
 
+/// Result of [`optimal_match`]: row indices, matched column indices, and an
+/// optional difference matrix.
 type OptimalMatchResult = (Vec<usize>, Vec<usize>, Option<Array2<f64>>);
 
+/// Solves a rectangular linear assignment problem on `cost` using the
+/// Hungarian algorithm, returning `(row_indices, col_indices)` of the
+/// minimum-cost assignment. Handles `rows > cols` by transposing.
 fn hungarian_minimize(cost: &Array2<f64>) -> (Vec<usize>, Vec<usize>) {
     let rows = cost.nrows();
     let cols = cost.ncols();
@@ -85,6 +90,12 @@ fn hungarian_minimize(cost: &Array2<f64>) -> (Vec<usize>, Vec<usize>) {
     (idx0, idx1)
 }
 
+/// Computes log binomial coefficients `log(C(dp, ad))` for entries where
+/// `dp > 0`, clipping each value to `max_val` and rounding to `f32` precision.
+///
+/// The 64-bit floating point representation tops out around `e**700`, close to
+/// `binom(1000, 500)`, hence the `max_val` cap. Prefer [`logbincoeff`] for new
+/// code.
 pub fn get_binom_coeff<S1, S2, D>(
     ad: &ArrayBase<S1, D>,
     dp: &ArrayBase<S2, D>,
@@ -105,6 +116,9 @@ where
         .collect()
 }
 
+/// Computes `log(n! / (k! (n - k)!))` element-wise via `ln_gamma`.
+///
+/// Returns `None` if `n` and `k` do not have matching shapes.
 pub fn logbincoeff<S1, S2, D>(
     n: &ArrayBase<S1, D>,
     k: &ArrayBase<S2, D>,
@@ -124,6 +138,10 @@ where
     Some(out)
 }
 
+/// Normalizes a tensor so that elements along `axis` sum to 1.
+///
+/// When `axis` is `None`, the last axis is used. Returns `None` if `axis` is
+/// out of bounds.
 pub fn normalize<S, D>(x: &ArrayBase<S, D>, axis: Option<usize>) -> Option<ndarray::Array<f64, D>>
 where
     S: Data<Elem = f64>,
@@ -141,6 +159,7 @@ where
     Some(out)
 }
 
+/// Alias for [`normalize`] kept for parity with the Python API.
 pub fn tensor_normalize<S, D>(
     x: &ArrayBase<S, D>,
     axis: Option<usize>,
@@ -152,6 +171,11 @@ where
     normalize(x, axis)
 }
 
+/// Amplifies a log-likelihood tensor by subtracting the maximum along `axis`
+/// from each lane, improving numerical stability before exponentiation.
+///
+/// When `axis` is `None`, the last axis is used. Returns `None` if `axis` is
+/// out of bounds.
 pub fn loglik_amplify<S, D>(
     x: &ArrayBase<S, D>,
     axis: Option<usize>,
@@ -174,6 +198,19 @@ where
     Some(out)
 }
 
+/// Computes the entropy of beta distributions parameterized by the rows of
+/// `x` (shape `(N, 2)`). When `x_prior` is supplied, returns the
+/// Kullback-Leibler divergence between the two sets of beta distributions
+/// instead.
+///
+/// # Arguments
+/// * `x` - Beta-distribution shape parameters with shape `(N, 2)`.
+/// * `x_prior` - Optional prior shape parameters with the same shape as `x`.
+/// * `_axis` - Unused; kept for parity with the Python signature.
+///
+/// # Returns
+/// A length-`N` vector of entropies (or KL divergences), or `None` if the
+/// shapes are incompatible.
 pub fn beta_entropy(
     x: &Array2<f64>,
     x_prior: Option<&Array2<f64>>,
@@ -202,6 +239,11 @@ pub fn beta_entropy(
     Some(rv)
 }
 
+/// Returns the cross entropy `-E_p[log q]` for pairs of beta distributions
+/// whose shape parameters are given by the rows of `xp` and `xq`.
+///
+/// Both inputs must have two columns and the same number of rows; otherwise
+/// `None` is returned. For the plain entropy, call with `xp == xq`.
 pub fn _beta_cross_entropy(xp: &Array2<f64>, xq: &Array2<f64>) -> Option<Array1<f64>> {
     if xp.ncols() != 2 || xq.ncols() != 2 || xp.nrows() != xq.nrows() {
         return None;
@@ -216,6 +258,18 @@ pub fn _beta_cross_entropy(xp: &Array2<f64>, xq: &Array2<f64>) -> Option<Array1<
     Some(rv)
 }
 
+/// Maps `new_ids` to `ref_ids`, returning, for each entry of `ref_ids`, the
+/// index of the matching entry in `new_ids` (or `None` if absent).
+///
+/// `ref_ids` may contain repeated values, but `new_ids` is expected to hold
+/// unique values, so that indexing `new_ids` with the result reproduces
+/// `ref_ids`. When `uniq_ref_only` is `true`, each entry of `new_ids` is
+/// consumed by at most one match.
+///
+/// # Arguments
+/// * `ref_ids` - Reference identifiers (may contain duplicates).
+/// * `new_ids` - Identifiers to be mapped onto `ref_ids`.
+/// * `uniq_ref_only` - If `true`, advance the `new_ids` cursor after a match.
 pub fn r#match(ref_ids: &[String], new_ids: &[String], uniq_ref_only: bool) -> Vec<Option<usize>> {
     let mut idx1: Vec<usize> = (0..ref_ids.len()).collect();
     let mut idx2: Vec<usize> = (0..new_ids.len()).collect();
@@ -246,6 +300,14 @@ pub fn r#match(ref_ids: &[String], new_ids: &[String], uniq_ref_only: bool) -> V
     origin_idx.into_iter().map(|i| rt_idx2[i]).collect()
 }
 
+/// Matches the slices of `z` to those of `x` along `axis` so as to minimize
+/// the mean absolute difference, using the Hungarian algorithm.
+///
+/// After the match, `z` indexed by `idx1` aligns with `x` indexed by `idx0`
+/// along `axis`. When `return_delta` is `true`, the full pairwise difference
+/// matrix is also returned.
+///
+/// `axis` defaults to 1; values greater than 1 are rejected with `None`.
 pub fn optimal_match(
     x: &Array2<f64>,
     z: &Array2<f64>,
@@ -281,10 +343,23 @@ pub fn optimal_match(
     Some((idx0, idx1, return_delta.then_some(diff)))
 }
 
+/// Deprecated convenience wrapper that returns only the matched indices from
+/// [`optimal_match`]. Prefer calling [`optimal_match`] directly.
 pub fn greed_match(x: &Array2<f64>, z: &Array2<f64>, axis: Option<usize>) -> Option<Vec<usize>> {
     optimal_match(x, z, axis, false).map(|(_, idx1, _)| idx1)
 }
 
+/// Selects `n_donor` donors from a candidate set that may contain extras.
+///
+/// The genotype prior `gt_prob` and identity assignments `id_prob` may
+/// describe more donors than `n_donor`. Two selection strategies are
+/// supported via `mode`:
+/// * `"size"` - keep the `n_donor` donors with the largest assigned cell mass.
+/// * `"distance"` (default) - greedily keep the `n_donor` donors whose
+///   genotype profiles are most distinct from one another.
+///
+/// Returns the trimmed `id_prob` columns, floored at `1e-10`, or `None` if
+/// the donor counts in `gt_prob` and `id_prob` disagree.
 pub fn donor_select(
     gt_prob: &Array3<f64>,
     id_prob: &Array2<f64>,

@@ -1,3 +1,10 @@
+//! Generator of genotype barcodes for discriminatory variants.
+//!
+//! Rust port of vireoSNP's `GTbarcode` command-line entry point: loads donor
+//! genotypes from a VCF, filters low-quality variants, selects a minimal set
+//! of variants that discriminate the donors, and writes a TSV barcode table
+//! (optionally accompanied by a plot).
+
 #[cfg(feature = "cli")]
 use crate::vireo_snp::plot::base_plot;
 #[cfg(feature = "cli")]
@@ -15,6 +22,16 @@ use std::io::Write;
 #[cfg(feature = "cli")]
 use std::path::Path;
 
+/// CLI entry point for the `GTbarcode` tool.
+///
+/// Parses command-line arguments, loads a donor VCF, filters variants by
+/// coverage (`DP > 20`) and noise (`OTH/DP < 0.05`) — optionally excluding
+/// homozygous-alt sites — then picks a discriminating variant set via
+/// [`variant_select`](crate::vireo_snp::utils::variant_select::variant_select)
+/// and writes the resulting barcode table (and an optional plot) to disk.
+///
+/// Returns `None` on any I/O, parsing, or argument error; `Some(())` on
+/// success.
 #[cfg(feature = "cli")]
 pub fn main() -> Option<()> {
     let args: Vec<String> = env::args().collect();

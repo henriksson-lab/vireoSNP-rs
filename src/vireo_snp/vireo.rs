@@ -1,3 +1,11 @@
+//! Donor deconvolution for multiplexed scRNA-seq data (Vireo).
+//!
+//! This module provides the main entry point for fitting the Vireo SNP model:
+//! a fluent builder ([`VireoSnpBuilder`]) for the public Rust API, a result
+//! type ([`VireoSnpResult`]), and an optional command-line interface gated
+//! behind the `cli` feature. The implementation is a translation of the
+//! original Python `vireoSNP` package by Yuanhua Huang.
+
 use crate::vireo_snp::plot::base_plot;
 use crate::vireo_snp::utils::io_utils;
 use crate::vireo_snp::utils::vcf_utils;
@@ -11,12 +19,17 @@ use std::path::Path;
 #[cfg(feature = "cli")]
 use std::process;
 
+/// Identity pass-through used as a placeholder hook for progress reporting,
+/// mirroring the Python `show_progress` helper.
 pub fn show_progress<T>(rv: T) -> T {
     rv
 }
 
+/// Convenience `Result` alias whose error variant is [`VireoError`].
 pub type Result<T> = std::result::Result<T, VireoError>;
 
+/// Errors that can be produced while loading inputs, fitting the model, or
+/// writing Vireo outputs.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum VireoError {
     MissingCellData,
@@ -96,13 +109,19 @@ impl fmt::Display for VireoError {
 
 impl std::error::Error for VireoError {}
 
+/// Alias for [`VireoSnpBuilder`] used as the entry point of the fluent fit API.
 pub type FitBuilder = VireoSnpBuilder;
+/// Alias for [`VireoSnpResult`] returned from [`VireoSnpBuilder::run`].
 pub type FitResult = VireoSnpResult;
 
+/// Begin building a Vireo fit from the given cell data path (a cellSNP folder
+/// or VCF file). Equivalent to `VireoSnpBuilder::new().cell_data(...)`.
 pub fn fit(cell_data: impl Into<String>) -> FitBuilder {
     VireoSnpBuilder::new().cell_data(cell_data)
 }
 
+/// Return a column-slice (cells) of a [`io_utils::CountMatrix`], or `None`
+/// when the range is out of bounds. Used to honour the `--cellRange` option.
 fn subset_count_matrix_columns(
     mat: &io_utils::CountMatrix,
     start: usize,
@@ -157,6 +176,8 @@ fn subset_count_matrix_columns(
     }
 }
 
+/// Restrict the cells in `cell_dat` to the half-open range `[start, end)`,
+/// subsetting both the sample list and every count layer in place.
 fn subset_cell_range(cell_dat: &mut io_utils::CellData, start: usize, end: usize) -> Result<()> {
     if start > end {
         return Err(VireoError::InvalidCellRange(format!("{start}-{end}")));
@@ -174,6 +195,12 @@ fn subset_cell_range(cell_dat: &mut io_utils::CellData, start: usize, end: usize
     Ok(())
 }
 
+/// Builder for a Vireo SNP demultiplexing run.
+///
+/// The fields mirror the command-line options exposed by the original Python
+/// `vireo` CLI. Use [`VireoSnpBuilder::new`] (or [`fit`]) together with the
+/// chainable setter methods, then call [`VireoSnpBuilder::run`] to execute
+/// the model.
 #[derive(Clone, Debug)]
 pub struct VireoSnpBuilder {
     pub cell_data: Option<String>,
@@ -196,6 +223,8 @@ pub struct VireoSnpBuilder {
     pub no_plot: bool,
 }
 
+/// Output of a successful Vireo fit: the raw model result together with the
+/// donor/cell labels and per-cell variant counts needed to write reports.
 #[derive(Clone, Debug, PartialEq)]
 pub struct VireoSnpResult {
     pub result: VireoWrapResult,
@@ -231,131 +260,180 @@ impl Default for VireoSnpBuilder {
 }
 
 impl VireoSnpBuilder {
+    /// Create a new builder with default options.
     pub fn new() -> Self {
         Self::default()
     }
 
+    /// Set the cell genotype input: a cellSNP folder or a VCF file containing
+    /// AD/DP information. Maps to the Python `--cellData/-c` option.
     pub fn cell_data(mut self, path: impl Into<String>) -> Self {
         self.cell_data = Some(path.into());
         self
     }
 
+    /// Provide cell genotypes as comma-separated vartrix outputs
+    /// (`alt.mtx,ref.mtx,barcodes.tsv[,SNPs.vcf.gz]`). When set, this takes
+    /// precedence over [`cell_data`](Self::cell_data).
     pub fn vartrix_data(mut self, files: impl Into<String>) -> Self {
         self.vartrix_data = Some(files.into());
         self
     }
 
+    /// Path to a donor genotype VCF. The donor VCF should already be filtered
+    /// by sample and region (e.g. with `bcftools -s` / `-R`).
     pub fn donor_file(mut self, path: impl Into<String>) -> Self {
         self.donor_file = Some(path.into());
         self
     }
 
+    /// Alias for [`donor_file`](Self::donor_file) that reads more naturally
+    /// in user-facing code.
     pub fn with_donors(self, path: impl Into<String>) -> Self {
         self.donor_file(path)
     }
 
+    /// Number of donors to demultiplex into. May exceed the number of donors
+    /// in `donor_file`, in which case extra donor genotypes are learned.
     pub fn n_donor(mut self, value: i64) -> Self {
         self.n_donor = Some(value);
         self
     }
 
+    /// Alias for [`n_donor`](Self::n_donor).
     pub fn infer_donors(self, value: i64) -> Self {
         self.n_donor(value)
     }
 
+    /// Directory to write outputs into. Setting this also enables output
+    /// writing ([`write_outputs`](Self::write_outputs)).
     pub fn out_dir(mut self, path: impl Into<String>) -> Self {
         self.out_dir = Some(path.into());
         self.write_outputs = true;
         self
     }
 
+    /// FORMAT tag to read donor genotypes from (e.g. `GT`, `GP`, `PL`).
+    /// Defaults to `PL`.
     pub fn geno_tag(mut self, value: impl Into<String>) -> Self {
         self.geno_tag = value.into();
         self
     }
 
+    /// Restrict processing to the half-open cell index range `[start, end)`.
     pub fn cell_range(mut self, start: usize, end: usize) -> Self {
         self.cell_range = Some((start, end));
         self
     }
 
+    /// Alias for [`geno_tag`](Self::geno_tag).
     pub fn genotype_tag(self, value: impl Into<String>) -> Self {
         self.geno_tag(value)
     }
 
+    /// If `true`, skip doublet detection.
     pub fn no_doublet(mut self, value: bool) -> Self {
         self.no_doublet = value;
         self
     }
 
+    /// Convenience setter expressed positively: enable (`true`) or disable
+    /// (`false`) doublet checking.
     pub fn doublets(mut self, value: bool) -> Self {
         self.no_doublet = !value;
         self
     }
 
+    /// If `true`, treat any donor genotypes from the donor VCF as a prior
+    /// only and re-learn them. Equivalent to `--forceLearnGT`.
     pub fn learn_genotypes(mut self, value: bool) -> Self {
         self.force_learn_gt = value;
         self
     }
 
+    /// Number of random initialisations used when genotypes need to be
+    /// learned. Defaults to 50.
     pub fn n_init(mut self, value: i64) -> Self {
         self.n_init = value;
         self
     }
 
+    /// Number of extra donors to seed during pre-clustering when learning
+    /// genotypes. Set to 0 to use the default `round(sqrt(n_donor))`.
     pub fn extra_donor(mut self, value: i64) -> Self {
         self.n_extra_donor = value;
         self
     }
 
+    /// Strategy for searching among extra donors: `"size"` (n_cell per donor)
+    /// or `"distance"` (GT distance between donors). Defaults to `"distance"`.
     pub fn extra_donor_mode(mut self, value: impl Into<String>) -> Self {
         self.extra_donor_mode = value.into();
         self
     }
 
+    /// If `true`, treat donor GT as a prior only and re-learn the donor
+    /// genotypes during fitting.
     pub fn force_learn_gt(mut self, value: bool) -> Self {
         self.force_learn_gt = value;
         self
     }
 
+    /// Enable SNP-specific allelic ratios (ASE mode).
     pub fn ase_mode(mut self, value: bool) -> Self {
         self.ase_mode = value;
         self
     }
 
+    /// Enable detection of ambient RNAs in each cell (under development).
     pub fn check_ambient(mut self, value: bool) -> Self {
         self.check_ambient = value;
         self
     }
 
+    /// Number of subprocesses for computing; trades memory for speed. Values
+    /// below 1 are clamped to 1.
     pub fn nproc(mut self, value: usize) -> Self {
         self.nproc = value.max(1);
         self
     }
 
+    /// Seed for random initialisation.
     pub fn rand_seed(mut self, value: u64) -> Self {
         self.rand_seed = Some(value);
         self
     }
 
+    /// Alias for [`rand_seed`](Self::rand_seed).
     pub fn seed(self, value: u64) -> Self {
         self.rand_seed(value)
     }
 
+    /// Whether to write outputs to disk. When [`out_dir`](Self::out_dir) is
+    /// set this is enabled automatically.
     pub fn write_outputs(mut self, value: bool) -> Self {
         self.write_outputs = value;
         self
     }
 
+    /// If `true`, suppress GT-distance plotting.
     pub fn no_plot(mut self, value: bool) -> Self {
         self.no_plot = value;
         self
     }
 
+    /// Run the fit, returning `Some(result)` on success or `None` on failure.
+    /// Use [`run`](Self::run) when an explicit error is needed.
     pub fn fit(self) -> Option<VireoSnpResult> {
         self.run().ok()
     }
 
+    /// Execute the configured Vireo SNP fit.
+    ///
+    /// Loads cell genotype data (cellSNP folder, VCF, or vartrix outputs),
+    /// optionally subsets cells, matches against donor genotypes if provided,
+    /// runs the Vireo model, and (when an output directory is configured)
+    /// writes donor assignments, a GT plot, and the inferred donor VCF.
     pub fn run(mut self) -> Result<FitResult> {
         let input_path = self
             .cell_data
@@ -634,6 +712,8 @@ impl VireoSnpBuilder {
 }
 
 impl VireoSnpResult {
+    /// Write the donor-id assignment tables for this fit into `out_dir`,
+    /// creating the directory if it does not already exist.
     pub fn write_outputs(&self, out_dir: impl AsRef<str>) -> Result<()> {
         let out_dir = out_dir.as_ref();
         if fs::create_dir_all(out_dir).is_err() {
@@ -654,6 +734,8 @@ impl VireoSnpResult {
     }
 }
 
+/// Advance `index` past `option` and return the next positional argument,
+/// or an error if the value is missing or starts with `-`.
 #[cfg(feature = "cli")]
 fn cli_value(args: &[String], index: &mut usize, option: &str) -> Result<String> {
     *index += 1;
@@ -666,6 +748,9 @@ fn cli_value(args: &[String], index: &mut usize, option: &str) -> Result<String>
     Ok(value.clone())
 }
 
+/// Like [`cli_value`] but additionally parses the value into `T` via
+/// [`FromStr`](std::str::FromStr), returning [`VireoError::CliInvalidValue`]
+/// on parse failure.
 #[cfg(feature = "cli")]
 fn parse_cli_value<T>(args: &[String], index: &mut usize, option: &str) -> Result<T>
 where
@@ -678,6 +763,9 @@ where
     })
 }
 
+/// Parse a slice of CLI arguments (typically `env::args().skip(1)`) into a
+/// configured [`VireoSnpBuilder`]. Supports the same option names as the
+/// original Python `vireo` CLI (e.g. `--cellData`, `--nDonor`, `--outDir`).
 #[cfg(feature = "cli")]
 pub fn builder_from_cli_args(args: &[String]) -> Result<VireoSnpBuilder> {
     let mut builder = VireoSnpBuilder::new().write_outputs(true);
@@ -760,6 +848,9 @@ pub fn builder_from_cli_args(args: &[String]) -> Result<VireoSnpBuilder> {
     Ok(builder)
 }
 
+/// Parse `args`, run the fit and return the underlying wrapper result.
+/// Returns `Ok(None)` when no arguments were supplied (matching the Python
+/// CLI behaviour of printing usage in that case).
 #[cfg(feature = "cli")]
 pub fn run_cli(args: &[String]) -> Result<Option<VireoWrapResult>> {
     if args.is_empty() {
@@ -769,6 +860,9 @@ pub fn run_cli(args: &[String]) -> Result<Option<VireoWrapResult>> {
     Ok(builder.fit().map(|x| x.result))
 }
 
+/// Command-line entry point: reads arguments from the process environment,
+/// runs the Vireo fit, and exits with status 2 on error. Mirrors the
+/// `main()` function in the original Python `vireo` script.
 #[cfg(feature = "cli")]
 pub fn main() -> Option<VireoWrapResult> {
     let args: Vec<String> = env::args().skip(1).collect();

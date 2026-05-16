@@ -1,3 +1,8 @@
+//! Base functions for plotting vireoSNP results.
+//!
+//! Port of the Python `vireoSNP.plot.base_plot` module, providing heatmap
+//! rendering and genotype distance visualisations.
+
 use ndarray::{Array2, Array3};
 #[cfg(feature = "plotting")]
 use plotters::coord::Shift;
@@ -12,6 +17,8 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::path::Path;
 
+/// Returns the (min, max) of the finite values in `x`, or `None` if no finite
+/// entry exists.
 #[cfg(feature = "plotting")]
 fn matrix_range(x: &Array2<f64>) -> Option<(f64, f64)> {
     let mut iter = x.iter().copied().filter(|v| v.is_finite());
@@ -25,6 +32,8 @@ fn matrix_range(x: &Array2<f64>) -> Option<(f64, f64)> {
     Some((min_v, max_v))
 }
 
+/// Maps a scalar value within `[min_v, max_v]` to an RGBA colour for the
+/// requested colormap. Supports `"Set3"`, `"Reds"`, and a default green ramp.
 #[cfg(feature = "plotting")]
 fn heat_color(value: f64, min_v: f64, max_v: f64, cmap: &str, alpha: f64) -> RGBAColor {
     let denom = (max_v - min_v).abs();
@@ -61,6 +70,10 @@ fn heat_color(value: f64, min_v: f64, max_v: f64, cmap: &str, alpha: f64) -> RGB
     RGBAColor(r, g, b, alpha.clamp(0.0, 1.0))
 }
 
+/// Renders the heatmap of `x` onto the provided drawing area, with optional
+/// axis tick labels and title. Each cell is filled using `heat_color` and
+/// outlined; numeric values are drawn when `display_value` is set and cells
+/// are large enough.
 #[cfg(feature = "plotting")]
 fn draw_heat_matrix<B: DrawingBackend>(
     root: DrawingArea<B, Shift>,
@@ -139,6 +152,9 @@ fn draw_heat_matrix<B: DrawingBackend>(
     root.present()
 }
 
+/// Saves a heatmap of `x` to `path`, choosing the backend (PNG, SVG, or PDF)
+/// from the file extension. Returns `None` if the matrix is empty, the parent
+/// directory cannot be created, or the extension is unsupported.
 #[cfg(feature = "plotting")]
 fn save_heat_matrix(
     path: &str,
@@ -188,6 +204,7 @@ fn save_heat_matrix(
     }
 }
 
+/// PDF backend variant of [`save_heat_matrix`] that renders through Cairo.
 #[cfg(feature = "plotting-pdf")]
 fn save_heat_matrix_pdf(
     path: &str,
@@ -208,6 +225,8 @@ fn save_heat_matrix_pdf(
     Some(())
 }
 
+/// Stub used when the `plotting-pdf` feature is disabled; always returns
+/// `None` so callers fall back to another format.
 #[cfg(all(feature = "plotting", not(feature = "plotting-pdf")))]
 fn save_heat_matrix_pdf(
     path: &str,
@@ -234,6 +253,8 @@ fn save_heat_matrix_pdf(
     None
 }
 
+/// No-op fallback used when the `plotting` feature is disabled; performs all
+/// argument validation implicitly by ignoring inputs and returning success.
 #[cfg(not(feature = "plotting"))]
 fn save_heat_matrix(
     path: &str,
@@ -260,16 +281,38 @@ fn save_heat_matrix(
     Some(())
 }
 
+/// Returns the preferred output format for genotype-distance plots when the
+/// PDF backend is available.
 #[cfg(feature = "plotting-pdf")]
 fn gt_distance_format() -> &'static str {
     "pdf"
 }
 
+/// Returns the preferred output format for genotype-distance plots when the
+/// PDF backend is unavailable, falling back to SVG.
 #[cfg(not(feature = "plotting-pdf"))]
 fn gt_distance_format() -> &'static str {
     "svg"
 }
 
+/// Plot a heatmap of a distance matrix.
+///
+/// # Arguments
+/// * `x` - The matrix to render.
+/// * `yticks` - Optional tick labels for the y axis; must match `x.nrows()`.
+/// * `xticks` - Optional tick labels for the x axis; must match `x.ncols()`.
+/// * `rotation` - Rotation angle (degrees) for the x-axis tick labels.
+/// * `cmap` - Colormap name (e.g. `"BuGn"`, `"Reds"`, `"Set3"`).
+/// * `alpha` - Transparency between 0 and 1.
+/// * `display_value` - If `true`, draw the numeric value inside each cell.
+/// * `row_sort` - If `true`, sort rows by `sum(X[i, j] * 2^j)` as in the
+///   Python implementation.
+/// * `aspect` - Aspect mode (carried over from matplotlib's `imshow`).
+/// * `interpolation` - Interpolation mode (carried over from matplotlib).
+///
+/// # Returns
+/// `Some(())` on success, or `None` if the input is empty or tick labels do
+/// not match the matrix dimensions.
 pub fn heat_matrix(
     x: &Array2<f64>,
     yticks: Option<&[String]>,
@@ -330,6 +373,14 @@ pub fn heat_matrix(
     Some(())
 }
 
+/// Plot the genotype-probability distance between samples.
+///
+/// Writes a heatmap of the mean absolute genotype-probability difference
+/// between every pair of estimated donors to
+/// `{out_dir}/fig_GT_distance_estimated.{ext}`. If `donor_gpb` and
+/// `donor_names_in` are provided, a second heatmap comparing the estimated
+/// donors against the input donors is written to
+/// `{out_dir}/fig_GT_distance_input.{ext}`.
 pub fn plot_GT(
     out_dir: &str,
     cell_gpb: &Array3<f64>,
@@ -407,6 +458,12 @@ pub fn plot_GT(
     Some(())
 }
 
+/// Build the numeric matrix that backs a "mini-code" plot of variant
+/// genotypes encoded as digits in each barcode string.
+///
+/// Each column corresponds to one barcode and each row to the digit at
+/// position `i + 1` of the barcode (the leading character is skipped to mirror
+/// the Python implementation). Returns `None` for an empty input.
 pub fn minicode_plot(
     barcode_set: &[String],
     var_ids: Option<&[String]>,
@@ -431,6 +488,11 @@ pub fn minicode_plot(
     Some(mat)
 }
 
+/// Render and save a mini-code plot for the given barcode set.
+///
+/// Builds the matrix via [`minicode_plot`], derives row/column labels from
+/// `var_ids` and `sample_ids` (falling back to indices), and writes the
+/// heatmap next to `out_file` using `fig_format` as the extension.
 pub fn save_minicode_plot(
     out_file: &str,
     barcode_set: &[String],
@@ -477,6 +539,7 @@ pub fn save_minicode_plot(
     )
 }
 
+/// Returns the unique elements of `values` in first-seen order.
 fn ordered_unique(values: &[String]) -> Vec<String> {
     let mut seen = BTreeSet::new();
     let mut out = Vec::new();
@@ -488,6 +551,10 @@ fn ordered_unique(values: &[String]) -> Vec<String> {
     out
 }
 
+/// Returns the permutation of indices that sorts `annotation` by the rank of
+/// each label in `order_ids` (or by first-seen order when `order_ids` is
+/// `None`). Returns `None` if the annotation length does not match `span` or
+/// any annotation value is missing from `order_ids`.
 fn annotation_order(
     annotation: &[String],
     order_ids: Option<&[String]>,
@@ -509,6 +576,10 @@ fn annotation_order(
     Some(idx)
 }
 
+/// Reorders the rows and columns of `x` according to the annotation groups.
+///
+/// Returns the permuted matrix together with the row and column index
+/// permutations that were applied.
 fn anno_heat_ordered(
     x: &Array2<f64>,
     row_anno: Option<&[String]>,
@@ -536,6 +607,12 @@ fn anno_heat_ordered(
     Some((out, row_idx, col_idx))
 }
 
+/// Render and save an annotated heatmap with rows and columns ordered by
+/// their annotation groups.
+///
+/// Equivalent of the Python `anno_heat` helper that also writes the figure to
+/// disk. Tick labels are included when `xticklabels` / `yticklabels` are set,
+/// using the annotation values (or fallback indices) of the reordered axes.
 pub fn save_anno_heat(
     out_file: &str,
     x: &Array2<f64>,
@@ -589,6 +666,16 @@ pub fn save_anno_heat(
     )
 }
 
+/// Heatmap with column or row annotations, based on `seaborn.clustermap`.
+///
+/// Rows and columns are reordered by annotation group. The `row_cluster` and
+/// `col_cluster` flags, as well as tick-label flags, are accepted for API
+/// parity with the Python implementation but do not affect the current Rust
+/// port. Returns `None` if the input is empty or the annotations are
+/// inconsistent.
+///
+/// Note: behaviour when both `row_anno` and `col_anno` are supplied has not
+/// been validated against the Python reference.
 pub fn anno_heat(
     x: &Array2<f64>,
     row_anno: Option<&[String]>,

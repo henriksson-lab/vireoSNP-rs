@@ -4,6 +4,12 @@ use rand::{Rng, SeedableRng};
 use statrs::function::gamma::digamma;
 use std::collections::BTreeMap;
 
+/// Compute Shannon entropy (base 2) for categorical barcodes.
+///
+/// When `y` is provided, the barcodes are formed by concatenating
+/// element-wise strings from `x` and `y`; otherwise `x` is used as-is.
+/// Returns the entropy together with the combined barcode strings, or
+/// `None` if `x` and `y` have mismatched lengths.
 pub fn barcode_entropy(x: &[String], y: Option<&[String]>) -> Option<(f64, Vec<String>)> {
     let z_str = match y {
         None => x.to_vec(),
@@ -26,6 +32,18 @@ pub fn barcode_entropy(x: &[String], y: Option<&[String]>) -> Option<(f64, Vec<S
     Some((entropy, z_str))
 }
 
+/// Select a set of discriminatory variants by greedily maximising
+/// information gain on categorical genotypes.
+///
+/// # Arguments
+/// * `gt` - Genotype matrix of shape `(n_var, n_donor)` with categorical values.
+/// * `var_count` - Optional per-variant counts of length `n_var`; when given,
+///   ties are broken by keeping variants with counts at or above the median.
+/// * `rand_seed` - Seed for the RNG used to break remaining ties.
+///
+/// # Returns
+/// `Some((final_entropy, barcode_set, variant_indices))` or `None` if
+/// `var_count` has the wrong length.
 pub fn variant_select(
     gt: &Array2<f64>,
     var_count: Option<&[f64]>,
@@ -76,6 +94,18 @@ pub fn variant_select(
     Some((entropy_now, barcode_set, variant_set))
 }
 
+/// Score variants by the evidence lower bound gain between a multi-donor
+/// model (M1) and a single-donor model (M0).
+///
+/// # Arguments
+/// * `id_prob` - Cell assignment probability matrix of shape `(n_cell, n_donor)`.
+/// * `ad` - Alternative-allele counts of shape `(n_var, n_cell)`.
+/// * `dp` - Total depth counts of shape `(n_var, n_cell)`.
+/// * `pseudocount` - Pseudo count used as the binomial prior.
+///
+/// # Returns
+/// `Some(elbo_gain)` per variant (ELBO_M1 - ELBO_M0), or `None` if the
+/// input shapes are inconsistent.
 pub fn variant_ELBO_gain(
     id_prob: &Array2<f64>,
     ad: &Array2<f64>,

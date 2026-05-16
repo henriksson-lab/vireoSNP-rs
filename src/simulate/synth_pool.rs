@@ -1,3 +1,7 @@
+//! Synthetic mixture of BAM files from multiple samples.
+//!
+//! Ported from the original Python implementation by Yuanhua Huang (2019-06-15).
+
 use rand::rngs::StdRng;
 use rand::seq::SliceRandom;
 use rand::SeedableRng;
@@ -13,10 +17,19 @@ use std::io::{BufRead, BufReader};
 #[cfg(feature = "cli")]
 use std::process::Command;
 
+/// Identity callback used as a placeholder progress reporter.
+///
+/// Mirrors the Python `show_progress` helper that is passed as a callback to
+/// `multiprocessing.Pool.apply_async`; it simply returns its argument unchanged.
 pub fn show_progress<T>(rv: T) -> T {
     rv
 }
 
+/// Generate cell barcodes by down-sampling each input sample.
+///
+/// Each per-sample list is shuffled and truncated to `n_cell_each` entries.
+/// The first sample is further truncated to `minor_sample * n_cell_each` cells.
+/// Returns `None` if any sample has fewer than `n_cell_each` barcodes.
 pub fn sample_barcodes(
     mut barcodes: Vec<Vec<String>>,
     n_cell_each: usize,
@@ -38,6 +51,14 @@ pub fn sample_barcodes(
     Some(barcodes)
 }
 
+/// Update cell barcodes with a sample id and inject synthetic doublets.
+///
+/// `barcodes` is a list of samples, each holding the barcodes for that sample.
+/// When `sample_suffix` is true, the last character of every barcode is replaced
+/// with the 1-based sample index. Doublets are then created at the given
+/// `doublet_rate` (defaulting to `n_cells / 100_000`), tagging each pairing with
+/// `S` (same sample) or `D` (different samples). Writes `barcodes_pool.tsv` and
+/// `cell_info.tsv` into `out_dir`. Returns `None` on invalid rate or I/O error.
 pub fn pool_barcodes(
     barcodes: &[Vec<String>],
     out_dir: &str,
@@ -120,6 +141,12 @@ pub fn pool_barcodes(
     Some(barcodes_out)
 }
 
+/// Fetch reads overlapping the given chromosomal positions from each input BAM,
+/// rewrite their cell-barcode tags using the input/output mapping, and write
+/// the deduplicated reads to `outbam`.
+///
+/// Placeholder stub for the Python `fetch_reads`; BAM I/O is not yet wired up
+/// in the Rust port, so this currently returns `None`.
 pub fn fetch_reads(
     _samfile_list: &[String],
     _chroms: &[String],
@@ -133,6 +160,12 @@ pub fn fetch_reads(
     None
 }
 
+/// Merge multiple BAMs into a single output, rewriting the cell-barcode tag of
+/// every read using the per-sample `barcodes_in` -> `barcodes_out` mapping and
+/// dropping duplicate read names.
+///
+/// Placeholder stub for the Python `merge_bams`; BAM I/O is not yet wired up in
+/// the Rust port, so this currently returns `None`.
 pub fn merge_bams(
     _samfile_list: &[String],
     _outbam: &str,
@@ -143,6 +176,13 @@ pub fn merge_bams(
     None
 }
 
+/// CLI entry point for the synthetic-pool tool.
+///
+/// Parses command-line options (sam files, barcode files, region VCF, output
+/// directory, doublet rate, sampling parameters, ...), loads and optionally
+/// down-samples the input barcodes, pools them, then either merges the BAMs or
+/// fetches reads at the variant positions, and finally sorts and indexes the
+/// resulting BAM via `samtools`. Returns `None` on any argument or I/O error.
 #[cfg(feature = "cli")]
 pub fn main() -> Option<()> {
     let args: Vec<String> = env::args().collect();

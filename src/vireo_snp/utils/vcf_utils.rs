@@ -1,3 +1,7 @@
+//! Utility functions for processing VCF files.
+//!
+//! Port of `vireoSNP/utils/vcf_utils.py` by Yuanhua Huang (24/06/2019).
+
 use crate::vireo_snp::utils::vireo_base;
 use flate2::read::MultiGzDecoder;
 use ndarray::{Array2, Array3};
@@ -5,6 +9,12 @@ use std::collections::{BTreeMap, HashMap};
 use std::fs::File;
 use std::io::{BufRead, BufReader, Read, Write};
 
+/// Per-sample genotype information parsed from a VCF.
+///
+/// Holds dense per-tag string vectors (for the sparse layout, one value per
+/// non-missing entry), dense per-tag string matrices (variant x sample, for
+/// the non-sparse layout), and integer vectors used to describe the sparse
+/// CSR layout (`indices`, `indptr`, `shape`).
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct VcfGenoInfo {
     pub string_vecs: BTreeMap<String, Vec<String>>,
@@ -12,6 +22,11 @@ pub struct VcfGenoInfo {
     pub i64_vecs: BTreeMap<String, Vec<i64>>,
 }
 
+/// Full contents of a VCF file as returned by [`load_VCF`].
+///
+/// Mirrors the dictionary returned by the Python `load_VCF`: variant ids,
+/// fixed columns, contig/comment header lines, sample ids, optional genotype
+/// information, and per-format-tag tagged-variant counts.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct VcfData {
     pub variants: Vec<String>,
@@ -23,6 +38,10 @@ pub struct VcfData {
     pub n_snp_tagged: Vec<i64>,
 }
 
+/// Result of matching donors between two VCF files via [`match_VCF_samples`].
+///
+/// Contains both the matched-only and full donor-by-donor genotype
+/// probability difference matrices together with the donor id labels.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct VcfSampleMatchResult {
     pub matched_gpb_diff: Array2<f64>,
@@ -34,6 +53,10 @@ pub struct VcfSampleMatchResult {
     pub matched_n_var: usize,
 }
 
+/// Columnar gene annotation table used by [`snp_gene_match`].
+///
+/// Equivalent to the `pandas.DataFrame` with columns chrom/start/stop/gene in
+/// the Python implementation.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct GeneData {
     pub chrom: Vec<String>,
@@ -42,6 +65,16 @@ pub struct GeneData {
     pub gene: Vec<String>,
 }
 
+/// Parse per-sample genotype information for every variant in `sample_dat`.
+///
+/// All variants are required to share the same FORMAT specification (taken
+/// from `format_list`, or from the first variant when `None`). When `sparse`
+/// is true the result is emitted as a CSR-like sparse layout (`indices`,
+/// `indptr`, `shape`); otherwise dense per-tag string matrices are produced.
+///
+/// Returns the parsed [`VcfGenoInfo`] together with the per-format-tag count
+/// of variants that carried that tag, or `None` if `sample_dat` is empty or
+/// the formats are inconsistent in sparse mode.
 pub fn parse_sample_info(
     sample_dat: &[Vec<String>],
     sparse: bool,
@@ -119,6 +152,25 @@ pub fn parse_sample_info(
     Some((rv, n_snp_tagged))
 }
 
+/// Load a complete VCF file (plain text, `.gz` or `.bgz`).
+///
+/// Initially designed for cellSNP output. Requires that all variants share
+/// the same FORMAT list and that a `#CHROM` header line is present with the
+/// sample ids. Also supports general VCF files (e.g. multi-sample
+/// genotypes); the whole file is held in memory, so prefer pre-filtering
+/// with bcftools for large inputs.
+///
+/// # Arguments
+///
+/// * `path` - path to the VCF; `.gz` / `.bgz` are decompressed transparently.
+/// * `biallelic_only` - drop variants whose REF or ALT is multi-character.
+/// * `load_sample` - if false, only the fixed columns are populated.
+/// * `sparse` - emit `GenoINFO` as a sparse CSR layout instead of dense
+///   matrices.
+/// * `format_list` - FORMAT tags to retain (defaults to the FORMAT of the
+///   first variant).
+///
+/// Returns `None` on I/O errors or malformed input.
 pub fn load_VCF(
     path: &str,
     biallelic_only: bool,
@@ -747,6 +799,12 @@ pub fn load_VCF(
     Some(rv)
 }
 
+/// Write VCF data to an HDF5 file.
+///
+/// Stores variant ids, sample ids, contig/comment header lines, the
+/// `FixedINFO` columns, and (when present) `GenoINFO` string vectors,
+/// dense string matrices, and integer vectors used by the sparse layout.
+/// Returns `None` if creation or any dataset write fails.
 pub fn write_VCF_to_hdf5(vcf_dat: &VcfData, out_file: &str) -> Option<()> {
     let file = match hdf5::File::create(out_file) {
         Ok(f) => f,
@@ -852,6 +910,12 @@ pub fn write_VCF_to_hdf5(vcf_dat: &VcfData, out_file: &str) -> Option<()> {
     Some(())
 }
 
+/// Materialise sparse `GenoINFO` entries (e.g. `AD`, `DP`) into dense
+/// sample-by-variant matrices of `f64`.
+///
+/// For each requested key the comma-separated value is split and `axes[i]`
+/// (Python-style; negative indices count from the end) selects which
+/// component to keep. Missing values (`.`) are read as `0`.
 pub fn read_sparse_GeneINFO(
     geno_info: &VcfGenoInfo,
     keys: Option<&[String]>,
@@ -907,6 +971,13 @@ pub fn read_sparse_GeneINFO(
     Some(rv)
 }
 
+/// Build per-sample `GT`, `AD`, `DP`, and `PL` strings from estimated
+/// genotype probabilities and read counts.
+///
+/// `gt_prob` is the (variant, sample, genotype) probability tensor; the
+/// most likely genotype yields `GT` (`0/0`, `1/0`, `1/1`), probabilities
+/// are clipped at `1e-10` before being converted to Phred-scaled `PL`,
+/// and rounded `AD` / `DP` reads are emitted as integers.
 pub fn GenoINFO_maker(
     gt_prob: &Array3<f64>,
     ad_reads: &ndarray::Array2<f64>,
@@ -960,6 +1031,13 @@ pub fn GenoINFO_maker(
     Some(rv)
 }
 
+/// Write `vcf_dat` to disk as a VCF file.
+///
+/// Existing `##FORMAT` lines for any of `geno_tags` are dropped from the
+/// header and replaced with standard descriptions for `GT`, `AD`, `DP`,
+/// and `PL`. Fixed columns are written followed by one `FORMAT` column
+/// per sample. If `out_file` ends in `.gz` the resulting file is compressed
+/// with the `gzip` command.
 pub fn write_VCF(out_file: &str, vcf_dat: &VcfData, geno_tags: Option<&[String]>) -> Option<()> {
     let geno_tags = geno_tags
         .map(|x| x.to_vec())
@@ -1067,6 +1145,13 @@ pub fn write_VCF(out_file: &str, vcf_dat: &VcfData, geno_tags: Option<&[String]>
     Some(())
 }
 
+/// Parse a donor genotype-probability tensor from raw FORMAT strings.
+///
+/// `tag` selects the encoding: `GT` (hard genotype), `GP` (genotype
+/// probabilities) or `PL` (Phred-scaled likelihoods). `min_prob` is added
+/// to every entry before per-sample renormalisation.
+///
+/// Returns a `(variants, samples, 3)` tensor of normalised probabilities.
 pub fn parse_donor_GPb(gt_dat: &[Vec<String>], tag: &str, min_prob: f64) -> Option<Array3<f64>> {
     if !matches!(tag, "GT" | "GP" | "PL") {
         return None;
@@ -1097,6 +1182,10 @@ pub fn parse_donor_GPb(gt_dat: &[Vec<String>], tag: &str, min_prob: f64) -> Opti
     Some(gt_prob)
 }
 
+/// Decode a single FORMAT cell into a three-element genotype probability
+/// vector for the given `tag` (`GT`, `GP`, or `PL`).
+///
+/// Missing-value encodings (`.`, `./.`, `.|.`) yield a flat `1/3` prior.
 pub fn parse_GT_code(code: &str, tag: &str) -> Option<[f64; 3]> {
     if code == "." || code == "./." || code == ".|." {
         return Some([1.0 / 3.0, 1.0 / 3.0, 1.0 / 3.0]);
@@ -1151,6 +1240,13 @@ pub fn parse_GT_code(code: &str, tag: &str) -> Option<[f64; 3]> {
     }
 }
 
+/// Match variant ids between two lists, tolerating an inconsistent
+/// `chr` prefix.
+///
+/// First tries a direct match; if every entry is unmatched, retries after
+/// prepending `chr` to the first list, and finally to the second list.
+/// Returns, for each entry of `snp_ids1`, the matching index in
+/// `snps_ids2` (or `None`).
 pub fn match_SNPs(snp_ids1: &[String], snps_ids2: &[String]) -> Vec<Option<usize>> {
     let mut map2 = HashMap::with_capacity(snps_ids2.len());
     for (i, id2) in snps_ids2.iter().enumerate() {
@@ -1182,6 +1278,20 @@ pub fn match_SNPs(snp_ids1: &[String], snps_ids2: &[String]) -> Vec<Option<usize
     out
 }
 
+/// Match donors between two VCF files via genotype probabilities.
+///
+/// For best performance, pre-subset the inputs with
+/// `bcftools view large.vcf.gz -R small.vcf.gz -Oz -o sub.vcf.gz`.
+///
+/// # Arguments
+///
+/// * `vcf_file1`, `vcf_file2` - VCF paths (plain, gzip, or bgzip).
+/// * `gt_tag1`, `gt_tag2` - FORMAT tag used to derive genotype probabilities
+///   in each file (`GT`, `GP`, or `PL`).
+///
+/// Variants are matched first (allowing `chr` mismatches), then donors are
+/// aligned via [`vireo_base::optimal_match`]; the result reports both the
+/// matched and full donor-by-donor probability difference matrices.
 pub fn match_VCF_samples(
     vcf_file1: &str,
     vcf_file2: &str,
@@ -1267,6 +1377,29 @@ pub fn match_VCF_samples(
     })
 }
 
+/// Match genes to a list of SNPs using their chromosome and position.
+///
+/// Variants are looked up against `gene_df` starting from the tightest
+/// `gaps` value (overlapping) outwards; for cis genes only the nearest one
+/// is reported, and `multi_gene = false` also collapses overlapping genes
+/// to the single most central hit.
+///
+/// # Arguments
+///
+/// * `var_fixed_info` - the `FixedINFO` map from [`load_VCF`], must contain
+///   `CHROM` and `POS` columns.
+/// * `gene_df` - gene annotations.
+/// * `gene_key` - column to use for gene names; only `"gene"` is supported.
+/// * `multi_gene` - if true, report every overlapping gene at gap 0.
+/// * `gaps` - ascending list of distance thresholds in bp (default
+///   `[0, 1000, 10000, 100000]`).
+///
+/// # Returns
+///
+/// A pair `(gene_list, flag_list)`. `gene_list[i]` is the matched gene
+/// names for variant `i` (possibly empty), and `flag_list[i]` encodes the
+/// gap bucket that matched: `0` overlapping, `1` within 1 kb, `2` within
+/// 10 kb, `3` within 100 kb, `4` no cis gene.
 pub fn snp_gene_match(
     var_fixed_info: &BTreeMap<String, Vec<String>>,
     gene_df: &GeneData,

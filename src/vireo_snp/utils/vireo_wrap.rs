@@ -1,3 +1,5 @@
+//! Wrap function for running the Vireo model with multiple initialisations.
+
 use crate::vireo_snp::utils::vireo_base;
 use crate::vireo_snp::utils::vireo_doublet;
 use crate::vireo_snp::utils::vireo_model::Vireo;
@@ -5,6 +7,10 @@ use ndarray::{Array2, Array3};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
+/// Aggregated outputs from [`vireo_wrap`].
+///
+/// Holds the final cell-donor assignments, donor genotype posteriors, doublet
+/// predictions, allelic rate parameters, and optional ambient-RNA estimates.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct VireoWrapResult {
     pub id_prob: Array2<f64>,
@@ -21,6 +27,9 @@ pub struct VireoWrapResult {
     pub lb_doublet: f64,
 }
 
+/// Helper that fits a single [`Vireo`] model and returns it.
+///
+/// Used to run model fitting as a parallel task across multiple initialisations.
 pub fn _model_fit(
     mut model: Vireo,
     ad: &Array2<f64>,
@@ -32,6 +41,8 @@ pub fn _model_fit(
     Some(model)
 }
 
+/// Reshape a `(n_variant, n_donor, n_gt)` tensor into a 2-D matrix of shape
+/// `(n_variant * n_gt, n_donor)` for matching purposes.
 fn flatten_gt_by_donor(gt: &Array3<f64>) -> Array2<f64> {
     let mut out = Array2::<f64>::zeros((gt.shape()[0] * gt.shape()[2], gt.shape()[1]));
     for v in 0..gt.shape()[0] {
@@ -44,6 +55,8 @@ fn flatten_gt_by_donor(gt: &Array3<f64>) -> Array2<f64> {
     out
 }
 
+/// Return a new genotype tensor keeping only the donor indices in `donors`,
+/// preserving their order along the donor axis.
 fn subset_gt_donors(gt: &Array3<f64>, donors: &[usize]) -> Array3<f64> {
     let mut out = Array3::<f64>::zeros((gt.shape()[0], donors.len(), gt.shape()[2]));
     for v in 0..gt.shape()[0] {
@@ -56,6 +69,8 @@ fn subset_gt_donors(gt: &Array3<f64>, donors: &[usize]) -> Array3<f64> {
     out
 }
 
+/// Reorder the donor columns of a cell-by-donor identity probability matrix
+/// according to `donors`.
 fn reorder_id_donors(id_prob: &Array2<f64>, donors: &[usize]) -> Array2<f64> {
     let mut out = Array2::<f64>::zeros((id_prob.nrows(), donors.len()));
     for (new_d, &old_d) in donors.iter().enumerate() {
@@ -64,6 +79,10 @@ fn reorder_id_donors(id_prob: &Array2<f64>, donors: &[usize]) -> Array2<f64> {
     out
 }
 
+/// Build and fit one initialisation of the Vireo model.
+///
+/// The RNG seed is derived from `random_seed` and the initialisation index
+/// `im` so that each initialisation explores a different starting point.
 fn fit_initial_model(
     im: usize,
     ad_arr: &Array2<f64>,
@@ -110,6 +129,15 @@ fn fit_initial_model(
     Some(model)
 }
 
+/// Run Vireo with multiple initialisations and return the best result.
+///
+/// Performs `n_init` initialisations (optionally in parallel), keeps the model
+/// with the highest ELBO, optionally explores extra donors and refines the
+/// genotype prior, and finally predicts doublets and (optionally) ambient RNA
+/// contamination.
+///
+/// Returns `None` if no donor count can be determined or if any of the
+/// underlying model-fitting or prediction steps fail.
 pub fn vireo_wrap(
     ad_arr: &Array2<f64>,
     dp_arr: &Array2<f64>,

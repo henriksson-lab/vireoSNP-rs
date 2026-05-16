@@ -6,6 +6,8 @@ use std::fs::File;
 use std::io::{BufRead, BufReader, Write};
 use std::path::Path;
 
+/// Cell-level data parsed from cellSNP/VarTrix output: variants, VCF metadata,
+/// sample barcodes, and named count matrices (typically `AD` and `DP`).
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct CellData {
     pub variants: Vec<String>,
@@ -16,6 +18,8 @@ pub struct CellData {
     pub layers: BTreeMap<String, CountMatrix>,
 }
 
+/// Storage backend for a count matrix layer: dense `f64`, dense `u32`, or a
+/// CSC sparse matrix mirroring SciPy's `csc_matrix` layout.
 #[derive(Clone, Debug, PartialEq)]
 pub enum CountMatrix {
     Dense(Array2<f64>),
@@ -29,6 +33,11 @@ pub enum CountMatrix {
     },
 }
 
+/// Match variants between cell VCF and donor VCF information.
+///
+/// Subsets both `cell_dat` (AD/DP layers, variants, fixed INFO) and
+/// `donor_vcf` (variants, fixed INFO, genotype INFO) to the set of variants
+/// present in both, preserving the order of `cell_dat.variants`.
 pub fn match_donor_VCF(
     mut cell_dat: CellData,
     mut donor_vcf: vcf_utils::VcfData,
@@ -115,6 +124,16 @@ pub fn match_donor_VCF(
     Some((cell_dat, donor_vcf))
 }
 
+/// Read data from a cellSNP output directory.
+///
+/// # Arguments
+/// * `dir_name` - directory containing `cellSNP.base.vcf[.gz]`,
+///   `cellSNP.tag.{layer}.mtx`, and `cellSNP.samples.tsv`.
+/// * `layers` - layer names to load; defaults to `["AD", "DP"]`.
+///
+/// # Returns
+/// `CellData` with variants, the requested layers, and cell barcodes,
+/// or `None` if any expected file is missing or malformed.
 pub fn read_cellSNP(dir_name: &str, layers: Option<&[String]>) -> Option<CellData> {
     let layers = layers
         .map(|x| x.to_vec())
@@ -441,6 +460,17 @@ pub fn read_cellSNP(dir_name: &str, layers: Option<&[String]>) -> Option<CellDat
     Some(cell_dat)
 }
 
+/// Read data from VarTrix output.
+///
+/// # Arguments
+/// * `alt_mtx` - Matrix Market file for alternative-allele counts.
+/// * `ref_mtx` - Matrix Market file for reference-allele counts.
+/// * `cell_file` - file with one cell barcode per line.
+/// * `vcf_file` - optional VCF used to fetch variants in VarTrix.
+///
+/// # Returns
+/// `CellData` containing `AD`, `DP` (= ref + alt), cells, and optionally
+/// variant information. Returns `None` on I/O or parse failure.
 pub fn read_vartrix(
     alt_mtx: &str,
     ref_mtx: &str,
@@ -579,6 +609,12 @@ pub fn read_vartrix(
     Some(cell_dat)
 }
 
+/// Write the results of donor identification into files under `out_dir`.
+///
+/// Produces `_log.txt`, `summary.tsv`, `donor_ids.tsv`, `prob_singlet.tsv`,
+/// `prob_doublet.tsv`, and (when ambient RNA was estimated) `prop_ambient.tsv`.
+/// Cells with `prob_max < 0.9` or fewer than 10 variants are labelled
+/// `unassigned`; cells with doublet probability `>= 0.9` are labelled `doublet`.
 pub fn write_donor_id(
     out_dir: &str,
     donor_names: &[String],
@@ -773,6 +809,12 @@ pub fn write_donor_id(
     Some(())
 }
 
+/// Generate a per-donor barcode whitelist suitable as input for
+/// `umi_tools extract`.
+///
+/// Reads the `donor_ids.tsv`-style file at `donor_id_file`, skips cells
+/// labelled `unassigned` or `doublet`, strips the `-suffix` from each
+/// barcode, and writes one file `{out_prefix}_{donor}.txt` per donor.
 pub fn make_whitelists(donor_id_file: &str, out_prefix: &str) -> Option<()> {
     let file = match File::open(donor_id_file) {
         Ok(file) => file,

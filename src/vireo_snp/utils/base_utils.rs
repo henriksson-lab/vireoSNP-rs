@@ -1,6 +1,15 @@
 use ndarray::Array2;
 use std::collections::BTreeSet;
 
+/// Build a confusion matrix between two parallel id annotations.
+///
+/// Returns `None` if `ids1` and `ids2` have different lengths.
+///
+/// # Returns
+///
+/// `(confuse_mat, ids1_uniq, ids2_uniq)` where `confuse_mat[i, j]` is the
+/// number of samples whose first annotation equals `ids1_uniq[i]` and whose
+/// second annotation equals `ids2_uniq[j]`. The unique id vectors are sorted.
 pub fn get_confusion(
     ids1: &[String],
     ids2: &[String],
